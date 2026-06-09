@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: iag-warehouse API
+  version: 1.0.0
+  description: Physical warehouse execution — RM/FG/consumables/spares/equipment, bins, pick/pack.
+servers:
+  - url: /api/v1/warehouse
+paths:
+  /api/v1/bootstrap:
+    get:
+      summary: Dashboard bootstrap (facilities)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Service overview
+  /api/v1/facilities:
+    get:
+      summary: List facilities
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Facility list
+    post:
+      summary: Create facility
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Created
+  /api/v1/facilities/{code}/zones:
+    get:
+      summary: List zones in facility
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Zone list
+  /api/v1/bins/{code}/stock:
+    get:
+      summary: Stock balances in bin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Balance rows
+  /api/v1/items:
+    get:
+      summary: List items
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_class
+          in: query
+          schema:
+            type: string
+            enum: [raw_material, finished_good, consumable, spare_part, equipment]
+      responses:
+        "200":
+          description: Item list
+    post:
+      summary: Create item
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Created
+  /api/v1/receipts:
+    get:
+      summary: List receipts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Receipt list
+    post:
+      summary: Create draft receipt
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Draft receipt
+  /api/v1/receipts/{id}/post:
+    post:
+      summary: Post receipt to stock
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Posted receipt
+  /api/v1/issues/for-department:
+    post:
+      summary: Issue consumables to a department
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Issue created
+  /api/v1/production/consume:
+    post:
+      summary: Production RM consumption
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Consumption posted
+  /api/v1/production/output:
+    post:
+      summary: Production FG output (QC hold)
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: FG received
+  /api/v1/pick-lists/{id}/confirm:
+    post:
+      summary: Confirm pick list for dispatch
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pick confirmed
+  /api/v1/assets/{tag}/check-out:
+    post:
+      summary: Check out equipment custody
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tag
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Asset checked out
+  /api/v1/admin/monitoring/summary:
+    get:
+      summary: Operator monitoring summary
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Summary metrics
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
