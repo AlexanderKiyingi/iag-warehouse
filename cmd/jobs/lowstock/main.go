@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -40,6 +41,8 @@ func main() {
 	st.SetEventBus(bus)
 	defer bus.Close()
 
+	notifyRecipient := events.DefaultNotifyRecipient()
+
 	items, err := st.ListLowStock(ctx)
 	if err != nil {
 		log.Fatalf("low stock scan: %v", err)
@@ -55,6 +58,13 @@ func main() {
 		}
 		if bus.Enabled() {
 			bus.Publish(ctx, events.TypeStockBelowMinimum, data, item.SKU)
+			// Raise a user-visible replenishment alert to the warehouse desk.
+			if notifyRecipient != "" {
+				bus.PublishAlert(ctx, "", notifyRecipient, "warehouse.alert", map[string]string{
+					"Title": "Low stock: " + item.SKU,
+					"Body":  fmt.Sprintf("SKU %s in bin %s is at %.2f (minimum %.2f) — replenishment needed.", item.SKU, item.BinCode, item.Qty, item.MinQty),
+				}, "warehouse-lowstock-"+item.SKU)
+			}
 		} else {
 			_ = outboxStore.Enqueue(ctx, events.TypeStockBelowMinimum, item.SKU, map[string]any{
 				"type": events.TypeStockBelowMinimum,

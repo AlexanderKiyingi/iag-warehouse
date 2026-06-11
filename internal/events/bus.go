@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ const (
 	TypeAssetCheckedOut     = "warehouse.asset.checked_out"
 	TypeStockBelowMinimum   = "warehouse.stock.below_minimum"
 	TypeMovementPosted      = "warehouse.movement.posted"
+	TypeAlertRaised         = "warehouse.alert.raised"
 )
 
 type PlatformEvent struct {
@@ -179,6 +181,28 @@ func (b *Bus) publishDirect(ctx context.Context, evt PlatformEvent, key string) 
 	})
 }
 
+// PublishAlert emits warehouse.alert.raised on iag.operations for the
+// notifications policy consumer, using the shared
+// {channel,recipient,templateId,variables} envelope.
+func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
+	if b == nil || !b.enabled || recipient == "" || templateID == "" {
+		return
+	}
+	vars := map[string]any{}
+	for k, v := range variables {
+		vars[k] = v
+	}
+	if channel == "" {
+		channel = defaultNotifyChannel()
+	}
+	b.Publish(ctx, TypeAlertRaised, map[string]any{
+		"channel":    channel,
+		"recipient":  recipient,
+		"templateId": templateID,
+		"variables":  vars,
+	}, key)
+}
+
 func ParseBrokers(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -188,6 +212,19 @@ func ParseBrokers(raw string) []string {
 		}
 	}
 	return out
+}
+
+func defaultNotifyChannel() string {
+	if ch := strings.TrimSpace(os.Getenv("NOTIFY_CHANNEL")); ch != "" {
+		return ch
+	}
+	return "email"
+}
+
+// DefaultNotifyRecipient is the fallback recipient (e.g. the warehouse/ops
+// desk) used when an alert has no specific user to address.
+func DefaultNotifyRecipient() string {
+	return strings.TrimSpace(os.Getenv("NOTIFY_DEFAULT_RECIPIENT"))
 }
 
 func nullableKey(s string) any {
