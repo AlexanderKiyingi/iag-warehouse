@@ -14,7 +14,20 @@ ENV PLATFORM_GO_DEP=/deps/platform-go
 FROM base AS platform-go-clone
 ARG IAG_META_REF=main
 ARG IAG_META_REPO=https://github.com/AlexanderKiyingi/IAG_multi_backend.git
-RUN git clone --depth 1 --branch "${IAG_META_REF}" "${IAG_META_REPO}" /tmp/iag \
+# The meta-repo is private, so an anonymous clone fails in CI with
+# "could not read Username for 'https://github.com'". Railway's Metal builder
+# does not support BuildKit secret mounts, so pass a GitHub token as a build
+# ARG (set GH_TOKEN as a build variable on the service). It is injected into the
+# clone URL only at build time and is not retained in the final image — the
+# standalone image copies platform-go out via --from, never the token or .git.
+# When GH_TOKEN is empty the clone falls back to the anonymous URL.
+ARG GH_TOKEN=
+RUN set -e; \
+    CLONE_URL="${IAG_META_REPO}"; \
+    if [ -n "${GH_TOKEN}" ]; then \
+      CLONE_URL=$(printf '%s' "${IAG_META_REPO}" | sed "s#https://#https://x-access-token:${GH_TOKEN}@#"); \
+    fi; \
+    git clone --depth 1 --branch "${IAG_META_REF}" "${CLONE_URL}" /tmp/iag \
     && mv /tmp/iag/shared/platform-go "${PLATFORM_GO_DEP}" \
     && rm -rf /tmp/iag
 
