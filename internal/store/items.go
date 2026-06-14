@@ -40,6 +40,18 @@ func (s *Store) CreateItem(ctx context.Context, sku, name, materialClass, tracki
 	return item, err
 }
 
+func (s *Store) GetItemBySKU(ctx context.Context, sku string) (models.Item, error) {
+	var item models.Item
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at
+		FROM wh_items WHERE sku = $1`, sku,
+	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return item, ErrNotFound
+	}
+	return item, err
+}
+
 func (s *Store) GetItemIDBySKU(ctx context.Context, sku string) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `SELECT id FROM wh_items WHERE sku = $1`, sku).Scan(&id)

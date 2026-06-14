@@ -137,13 +137,13 @@ type movementInput struct {
 }
 
 type LowStockItem struct {
-	ItemID uuid.UUID `json:"item_id"`
-	SKU    string    `json:"sku"`
-	Name   string    `json:"name"`
-	Qty    float64   `json:"qty"`
-	MinQty float64   `json:"min_qty"`
-	BinID  uuid.UUID `json:"bin_id"`
-	BinCode string   `json:"bin_code"`
+	ItemID  uuid.UUID `json:"item_id"`
+	SKU     string    `json:"sku"`
+	Name    string    `json:"name"`
+	Qty     float64   `json:"qty"`
+	MinQty  float64   `json:"min_qty"`
+	BinID   uuid.UUID `json:"bin_id"`
+	BinCode string    `json:"bin_code"`
 }
 
 func (s *Store) ListLowStock(ctx context.Context) ([]LowStockItem, error) {
@@ -193,6 +193,40 @@ func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID,
 		payload.BatchBusinessID = *batchID
 	}
 	s.invBridge.EmitMovementPosted(ctx, payload)
+}
+
+// pickAvailableBinCode chooses a concrete bin to issue an item from when the
+// caller didn't specify one. It prefers the smallest available bin that still
+// holds the full requested qty (best-fit, so large bins aren't fragmented);
+// if no single bin can satisfy the qty it falls back to the fullest bin so the
+// downstream deduction returns a clean ErrInsufficientStock rather than a
+// confusing "bin not found". Lot/serial-tracked lines must still target an
+// exact balance, so the chosen bin is scoped to the (lot, serial) on the line.
+func (s *Store) pickAvailableBinCode(ctx context.Context, itemID uuid.UUID, qty float64, lotKey, serialKey string) (string, error) {
+	lotKey, serialKey = normalizeKeys(lotKey, serialKey)
+	var code string
+	err := s.pool.QueryRow(ctx, `
+		SELECT bn.code
+		FROM wh_stock_balances b
+		JOIN wh_bins bn ON bn.id = b.bin_id
+		WHERE b.item_id = $1 AND b.status = 'available'
+		  AND b.lot_key = $2 AND b.serial_key = $3 AND b.qty >= $4
+		ORDER BY b.qty ASC
+		LIMIT 1`, itemID, lotKey, serialKey, qty).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = s.pool.QueryRow(ctx, `
+			SELECT bn.code
+			FROM wh_stock_balances b
+			JOIN wh_bins bn ON bn.id = b.bin_id
+			WHERE b.item_id = $1 AND b.status = 'available'
+			  AND b.lot_key = $2 AND b.serial_key = $3 AND b.qty > 0
+			ORDER BY b.qty DESC
+			LIMIT 1`, itemID, lotKey, serialKey).Scan(&code)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrInsufficientStock
+	}
+	return code, err
 }
 
 func (s *Store) getItemSKU(ctx context.Context, tx pgx.Tx, itemID uuid.UUID) (string, error) {

@@ -1,13 +1,35 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"iag-warehouse/backend/internal/models"
+	"iag-warehouse/backend/internal/store"
 )
 
 func (a *API) ListItems(c *gin.Context) {
+	// Exact-SKU lookup: services that key parts by SKU (e.g. iag-fleet
+	// resolving a part to a warehouse item id) pass ?sku=. Returns a 0-or-1
+	// element list so the caller can treat "unknown SKU" as an empty result
+	// rather than a 404.
+	if sku := strings.TrimSpace(c.Query("sku")); sku != "" {
+		item, err := a.Store.GetItemBySKU(c.Request.Context(), sku)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				ok(c, gin.H{"items": []models.Item{}})
+				return
+			}
+			storeErr(c, err)
+			return
+		}
+		ok(c, gin.H{"items": []models.Item{item}})
+		return
+	}
 	items, err := a.Store.ListItems(c.Request.Context(), c.Query("material_class"))
 	if err != nil {
 		storeErr(c, err)

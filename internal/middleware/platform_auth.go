@@ -3,7 +3,9 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 
 	"github.com/alvor-technologies/iag-platform-go/apierr"
 	"github.com/alvor-technologies/iag-platform-go/authclient"
@@ -120,6 +122,56 @@ func PlatformClaims(c *gin.Context) (*authclient.Claims, bool) {
 	}
 	cl, ok := v.(*authclient.Claims)
 	return cl, ok
+}
+
+// RequireServiceOrPermission guards endpoints that are reachable both by human
+// operators (who must carry the named permission) and by trusted peer services
+// calling over HTTP (e.g. iag-fleet issuing parts on a maintenance WO).
+//
+// Service-to-service tokens are issued by iag-authentication with only the
+// blanket platform.add_servicecall permission and a single-service audience
+// (aud=iag.warehouse), so they never carry fine-grained warehouse.* codes. We
+// therefore admit a principal when it is a service caller (principal_type=
+// service) whose client_id is allow-listed, falling back to the normal
+// permission check for everyone else. The allow-list is configured from
+// WAREHOUSE_SERVICE_CALLERS (comma-separated client ids); empty means "trust
+// any authenticated service principal", which is still gated by JWT signature
+// + audience at the edge.
+func RequireServiceOrPermission(code string) gin.HandlerFunc {
+	permGuard := RequirePermission(code)
+	return func(c *gin.Context) {
+		if claims, ok := PlatformClaims(c); ok && claims.IsService() && serviceCallerAllowed(claims.ClientID) {
+			c.Next()
+			return
+		}
+		permGuard(c)
+	}
+}
+
+func serviceCallerAllowed(clientID string) bool {
+	allow := serviceCallerAllowList()
+	if len(allow) == 0 {
+		return true
+	}
+	_, ok := allow[clientID]
+	return ok
+}
+
+var (
+	serviceCallerOnce sync.Once
+	serviceCallerSet  map[string]struct{}
+)
+
+func serviceCallerAllowList() map[string]struct{} {
+	serviceCallerOnce.Do(func() {
+		serviceCallerSet = map[string]struct{}{}
+		for _, id := range strings.Split(os.Getenv("WAREHOUSE_SERVICE_CALLERS"), ",") {
+			if t := strings.TrimSpace(id); t != "" {
+				serviceCallerSet[t] = struct{}{}
+			}
+		}
+	})
+	return serviceCallerSet
 }
 
 func RequirePermission(code string) gin.HandlerFunc {

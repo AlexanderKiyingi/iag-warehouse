@@ -62,11 +62,14 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.PATCH("/bins/:code", appmw.RequirePermission("warehouse.change_location"), api.PatchBin)
 		v1.GET("/bins/:code/stock", appmw.RequirePermission("warehouse.view_stock"), api.BinStock)
 
-		v1.GET("/items", appmw.RequirePermission("warehouse.view_item"), api.ListItems)
+		// view_item / view_stock and issue_consumable are reachable by peer
+		// services (iag-fleet queries availability and issues parts on WO
+		// completion), so they use RequireServiceOrPermission.
+		v1.GET("/items", appmw.RequireServiceOrPermission("warehouse.view_item"), api.ListItems)
 		v1.POST("/items", appmw.RequirePermission("warehouse.add_item"), api.CreateItem)
-		v1.GET("/items/:id", appmw.RequirePermission("warehouse.view_item"), api.GetItem)
+		v1.GET("/items/:id", appmw.RequireServiceOrPermission("warehouse.view_item"), api.GetItem)
 		v1.PATCH("/items/:id", appmw.RequirePermission("warehouse.change_item"), api.PatchItem)
-		v1.GET("/items/:id/balances", appmw.RequirePermission("warehouse.view_stock"), api.ItemBalances)
+		v1.GET("/items/:id/balances", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.ItemBalances)
 
 		v1.GET("/receipts", appmw.RequirePermission("warehouse.view_receipt"), api.ListReceipts)
 		v1.GET("/receipts/:id", appmw.RequirePermission("warehouse.view_receipt"), api.GetReceipt)
@@ -78,7 +81,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/issues/:id", appmw.RequirePermission("warehouse.view_issue"), api.GetIssue)
 		v1.POST("/issues", appmw.RequirePermission("warehouse.add_issue"), api.CreateIssue)
 		v1.POST("/issues/:id/post", appmw.RequirePermission("warehouse.post_issue"), api.PostIssue)
-		v1.POST("/issues/for-department", appmw.RequirePermission("warehouse.issue_consumable"), api.IssueForDepartment)
+		v1.POST("/issues/for-department", appmw.RequireServiceOrPermission("warehouse.issue_consumable"), api.IssueForDepartment)
 
 		v1.POST("/production/consume", appmw.RequirePermission("warehouse.production_consume"), api.ProductionConsume)
 		v1.POST("/production/output", appmw.RequirePermission("warehouse.production_output"), api.ProductionOutput)
@@ -91,8 +94,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/assets", appmw.RequirePermission("warehouse.add_asset"), api.CreateAsset)
 		v1.POST("/assets/:tag/check-in", appmw.RequirePermission("warehouse.checkin_asset"), api.CheckInAsset)
 		v1.POST("/assets/:tag/check-out", appmw.RequirePermission("warehouse.checkout_asset"), api.CheckOutAsset)
-		v1.GET("/spare-parts/low-stock", appmw.RequirePermission("warehouse.view_stock"), api.LowStock)
-		v1.GET("/spare-parts/by-asset/:asset_tag", appmw.RequirePermission("warehouse.view_item"), api.SparePartsByAsset)
+		v1.GET("/spare-parts/low-stock", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.LowStock)
+		v1.GET("/spare-parts/by-asset/:asset_tag", appmw.RequireServiceOrPermission("warehouse.view_item"), api.SparePartsByAsset)
 		v1.GET("/spare-compat", appmw.RequirePermission("warehouse.view_item"), api.ListSpareCompat)
 		v1.POST("/spare-compat", appmw.RequirePermission("warehouse.change_item"), api.CreateSpareCompat)
 		v1.DELETE("/spare-compat/:id", appmw.RequirePermission("warehouse.change_item"), api.DeleteSpareCompat)
