@@ -83,8 +83,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/issues/:id/post", appmw.RequirePermission("warehouse.post_issue"), api.PostIssue)
 		v1.POST("/issues/for-department", appmw.RequireServiceOrPermission("warehouse.issue_consumable"), api.IssueForDepartment)
 
-		v1.POST("/production/consume", appmw.RequirePermission("warehouse.production_consume"), api.ProductionConsume)
-		v1.POST("/production/output", appmw.RequirePermission("warehouse.production_output"), api.ProductionOutput)
+		// Reachable by peer services (iag-mes posts BOM backflush + finished-goods
+		// output on run completion), so these use RequireServiceOrPermission.
+		v1.POST("/production/consume", appmw.RequireServiceOrPermission("warehouse.production_consume"), api.ProductionConsume)
+		v1.POST("/production/output", appmw.RequireServiceOrPermission("warehouse.production_output"), api.ProductionOutput)
 
 		v1.POST("/transfers", appmw.RequirePermission("warehouse.add_transfer"), api.CreateTransfer)
 		v1.POST("/adjustments", appmw.RequirePermission("warehouse.adjust_stock"), api.CreateAdjustment)
