@@ -28,6 +28,7 @@ const (
 	TypeProductionOutput    = "warehouse.production.output"
 	TypePickConfirmed       = "warehouse.pick.confirmed"
 	TypeAssetCheckedOut     = "warehouse.asset.checked_out"
+	TypeAssetDisposed       = "warehouse.asset.disposed"
 	TypeStockBelowMinimum   = "warehouse.stock.below_minimum"
 	TypeMovementPosted      = "warehouse.movement.posted"
 	TypeAlertRaised         = "warehouse.alert.raised"

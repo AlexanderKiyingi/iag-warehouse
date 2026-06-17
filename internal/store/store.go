@@ -14,6 +14,8 @@ var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 var ErrInsufficientStock = errors.New("insufficient stock")
 var ErrStockNotAvailable = errors.New("stock not available for issue")
+var ErrForbidden = errors.New("forbidden")
+var ErrInvalidArgument = errors.New("invalid argument")
 
 type Store struct {
 	pool    *pgxpool.Pool

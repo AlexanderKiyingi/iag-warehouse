@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -81,6 +82,12 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.ItemID == "" || body.BinCode == "" {
 		badRequest(c, "item_id, bin_code, and qty_after are required")
+		return
+	}
+	// A manual adjustment must carry a reason (audit trail for shrinkage/damage/
+	// recount). A cycle count is self-justifying — the physical count is the reason.
+	if !cycle && strings.TrimSpace(body.Reason) == "" {
+		badRequest(c, "reason is required for a stock adjustment")
 		return
 	}
 	itemID, err := uuid.Parse(body.ItemID)

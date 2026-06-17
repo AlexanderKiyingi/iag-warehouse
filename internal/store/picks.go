@@ -49,6 +49,11 @@ func (s *Store) CreatePickList(ctx context.Context, in CreatePickListInput) (mod
 			return pl, err
 		}
 		lotKey, _ := normalizeKeys(line.LotKey, "")
+		// Reserve the stock now so it can't be issued or picked twice while this
+		// list is open. Fails the whole pick if free stock can't cover the line.
+		if err := s.reserveBalanceTx(ctx, tx, balanceKey{line.ItemID, bin.ID, lotKey, ""}, line.Qty); err != nil {
+			return pl, err
+		}
 		var pline models.PickLine
 		err = tx.QueryRow(ctx, `
 			INSERT INTO wh_pick_lines (pick_list_id, item_id, qty, bin_id, lot_key)
@@ -115,7 +120,9 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 	refTypePick := refType("pick_list")
 	for _, l := range lines {
 		lotKey, _ := normalizeKeys(l.lotKey, "")
-		if err := s.deductAvailableBalanceTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, l.qty); err != nil {
+		// Consume the reservation made at pick creation: removes on-hand and
+		// releases the held quantity in one step.
+		if err := s.consumeReservedTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, l.qty); err != nil {
 			return models.PickList{}, err
 		}
 		movID, err := s.insertMovementTx(ctx, tx, movementInput{
@@ -161,6 +168,71 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return models.PickList{}, err
+	}
+	return s.getPickList(ctx, pickListID)
+}
+
+// CancelPickList releases the stock reserved by an open pick list and marks it
+// cancelled. Idempotent (a second cancel returns the already-cancelled list);
+// a confirmed list cannot be cancelled (its stock is already consumed).
+func (s *Store) CancelPickList(ctx context.Context, pickListID uuid.UUID, actorID *uuid.UUID) (models.PickList, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.PickList{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var status string
+	err = tx.QueryRow(ctx, `SELECT status FROM wh_pick_lists WHERE id = $1 FOR UPDATE`, pickListID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.PickList{}, ErrNotFound
+	}
+	if err != nil {
+		return models.PickList{}, err
+	}
+	if status == "cancelled" {
+		return s.getPickList(ctx, pickListID)
+	}
+	if status == "confirmed" {
+		return models.PickList{}, ErrConflict
+	}
+
+	rows, err := tx.Query(ctx, `SELECT item_id, qty, bin_id, lot_key FROM wh_pick_lines WHERE pick_list_id = $1`, pickListID)
+	if err != nil {
+		return models.PickList{}, err
+	}
+	type lineRow struct {
+		itemID, binID uuid.UUID
+		qty           float64
+		lotKey        string
+	}
+	var lines []lineRow
+	for rows.Next() {
+		var l lineRow
+		if err := rows.Scan(&l.itemID, &l.qty, &l.binID, &l.lotKey); err != nil {
+			rows.Close()
+			return models.PickList{}, err
+		}
+		lines = append(lines, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return models.PickList{}, err
+	}
+
+	for _, l := range lines {
+		lotKey, _ := normalizeKeys(l.lotKey, "")
+		if err := s.releaseReservationTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, l.qty); err != nil {
+			return models.PickList{}, err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE wh_pick_lists SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, pickListID); err != nil {
+		return models.PickList{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return models.PickList{}, err
 	}

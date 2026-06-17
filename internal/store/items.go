@@ -101,7 +101,7 @@ func (s *Store) UpdateItem(ctx context.Context, id uuid.UUID, name *string, minQ
 
 func (s *Store) ListItemBalances(ctx context.Context, itemID uuid.UUID) ([]models.StockBalance, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT b.id, b.item_id, b.bin_id, b.lot_key, b.serial_key, b.qty, b.status, b.updated_at, i.sku, bn.code
+		SELECT b.id, b.item_id, b.bin_id, b.lot_key, b.serial_key, b.qty, b.reserved, b.status, b.updated_at, i.sku, bn.code
 		FROM wh_stock_balances b
 		JOIN wh_items i ON i.id = b.item_id
 		JOIN wh_bins bn ON bn.id = b.bin_id
@@ -114,9 +114,10 @@ func (s *Store) ListItemBalances(ctx context.Context, itemID uuid.UUID) ([]model
 	var out []models.StockBalance
 	for rows.Next() {
 		var bal models.StockBalance
-		if err := rows.Scan(&bal.ID, &bal.ItemID, &bal.BinID, &bal.LotKey, &bal.SerialKey, &bal.Qty, &bal.Status, &bal.UpdatedAt, &bal.ItemSKU, &bal.BinCode); err != nil {
+		if err := rows.Scan(&bal.ID, &bal.ItemID, &bal.BinID, &bal.LotKey, &bal.SerialKey, &bal.Qty, &bal.Reserved, &bal.Status, &bal.UpdatedAt, &bal.ItemSKU, &bal.BinCode); err != nil {
 			return nil, err
 		}
+		bal.Available = bal.Qty - bal.Reserved
 		out = append(out, bal)
 	}
 	return out, rows.Err()

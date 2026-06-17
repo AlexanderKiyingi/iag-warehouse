@@ -124,6 +124,26 @@ func PlatformClaims(c *gin.Context) (*authclient.Claims, bool) {
 	return cl, ok
 }
 
+// HasPerm reports whether the authenticated principal holds a permission, using
+// the same resolution as RequirePermission. For data-dependent checks (e.g.
+// tiered disposal approval, where the required tier permission is only known
+// after loading the record).
+func HasPerm(c *gin.Context, code string) bool {
+	claims, ok := PlatformClaims(c)
+	if !ok {
+		return false
+	}
+	return claims.IsSuperuser || claims.IsStaff || claims.HasPermission(code)
+}
+
+// ActorEmail returns the authenticated principal's email (empty if unauthenticated).
+func ActorEmail(c *gin.Context) string {
+	if claims, ok := PlatformClaims(c); ok && claims != nil {
+		return strings.TrimSpace(claims.Email)
+	}
+	return ""
+}
+
 // RequireServiceOrPermission guards endpoints that are reachable both by human
 // operators (who must carry the named permission) and by trusted peer services
 // calling over HTTP (e.g. iag-fleet issuing parts on a maintenance WO).

@@ -38,6 +38,7 @@ const (
 	MovementAdjustment        = "adjustment"
 	MovementAssetCheckin      = "asset_checkin"
 	MovementAssetCheckout     = "asset_checkout"
+	MovementAssetDispose      = "asset_dispose"
 	MovementPick              = "pick"
 )
 
@@ -95,6 +96,8 @@ type StockBalance struct {
 	LotKey    string    `json:"lot_key"`
 	SerialKey string    `json:"serial_key"`
 	Qty       float64   `json:"qty"`
+	Reserved  float64   `json:"reserved"`
+	Available float64   `json:"available"`
 	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
 	ItemSKU   string    `json:"item_sku,omitempty"`
@@ -192,8 +195,29 @@ type Asset struct {
 	Condition    string         `json:"condition"`
 	BookValueRef *string        `json:"book_value_ref,omitempty"`
 	Attrs        map[string]any `json:"attrs,omitempty"`
+	DisposedAt   *time.Time     `json:"disposed_at,omitempty"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+// AssetDisposal records the one-way retirement of a serialized asset out of
+// stores, with the method, any sale proceeds, and the authorization/gate pass.
+type AssetDisposal struct {
+	ID           uuid.UUID  `json:"id"`
+	AssetID      uuid.UUID  `json:"asset_id"`
+	AssetTag     string     `json:"asset_tag"`
+	Method       string     `json:"method"`
+	Reason       string     `json:"reason"`
+	Proceeds     float64    `json:"proceeds"`
+	Currency     string     `json:"currency"`
+	BookValue    *float64   `json:"book_value,omitempty"`
+	GatePassNo    string     `json:"gate_pass_no"`
+	AuthorizedBy  string     `json:"authorized_by"`
+	DisposedBy    *uuid.UUID `json:"disposed_by,omitempty"`
+	Status        string     `json:"status"`
+	DisposalValue float64    `json:"disposal_value"`
+	RequestedBy   string     `json:"requested_by"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type PickList struct {

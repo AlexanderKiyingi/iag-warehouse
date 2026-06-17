@@ -38,6 +38,11 @@ type Config struct {
 	KafkaQualityTopic      string
 	KafkaSupplyChainTopic  string
 	EventBusEnabled        bool
+	// RequireDisposalApproval gates asset disposal behind the tiered approval
+	// workflow: when true a disposal is created pending_approval and only retires
+	// the asset once its amount-band tiers have signed. Default false keeps
+	// disposal immediate. Set via WAREHOUSE_REQUIRE_DISPOSAL_APPROVAL.
+	RequireDisposalApproval bool
 }
 
 func Load() (*Config, error) {
@@ -62,6 +67,7 @@ func Load() (*Config, error) {
 		JWTIssuer:             getenv("JWT_ISSUER", "http://localhost:3001"),
 		JWKSURL:               getenv("JWKS_URL", "http://localhost:3001/.well-known/jwks.json"),
 		Audience:              getenv("AUDIENCE", "iag.warehouse"),
+		RequireDisposalApproval: strings.EqualFold(os.Getenv("WAREHOUSE_REQUIRE_DISPOSAL_APPROVAL"), "true"),
 		ServiceClientID:       getenv("SERVICE_CLIENT_ID", "iag-warehouse"),
 		ServiceClientSecret:   os.Getenv("SERVICE_CLIENT_SECRET"),
 		CORSOrigins:           splitCSV(corsenv.Allowlist("http://localhost:3000,http://localhost:8080")),

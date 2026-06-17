@@ -74,6 +74,32 @@ func (a *API) ConfirmPickList(c *gin.Context) {
 	})
 }
 
+func (a *API) CancelPickList(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		badRequest(c, "invalid pick list id")
+		return
+	}
+	var actorID *uuid.UUID
+	if uid, ok := middleware.UserID(c); ok {
+		actorID = &uid
+	}
+	a.withIdempotency(c, func() (int, any) {
+		pl, err := a.Store.CancelPickList(c.Request.Context(), id, actorID)
+		if err != nil {
+			switch err {
+			case store.ErrNotFound:
+				return http.StatusNotFound, gin.H{"error": "pick list not found"}
+			case store.ErrConflict:
+				return http.StatusConflict, gin.H{"error": "a confirmed pick list cannot be cancelled"}
+			default:
+				return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			}
+		}
+		return http.StatusOK, pl
+	})
+}
+
 func (a *API) CreatePackSession(c *gin.Context) {
 	var body struct {
 		PickListID string         `json:"pick_list_id"`

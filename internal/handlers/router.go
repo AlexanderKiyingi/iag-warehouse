@@ -96,6 +96,13 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/assets", appmw.RequirePermission("warehouse.add_asset"), api.CreateAsset)
 		v1.POST("/assets/:tag/check-in", appmw.RequirePermission("warehouse.checkin_asset"), api.CheckInAsset)
 		v1.POST("/assets/:tag/check-out", appmw.RequirePermission("warehouse.checkout_asset"), api.CheckOutAsset)
+		v1.POST("/assets/:tag/dispose", appmw.RequirePermission("warehouse.dispose_asset"), api.DisposeAsset)
+		v1.GET("/asset-disposals/approval-tiers", appmw.RequirePermission("warehouse.view_asset"), api.ListDisposalApprovalTiers)
+		// Approval routes use a low coarse gate (view_asset); the real authority is
+		// the per-tier permission checked inside, so a tier approver who is not a
+		// disposer can still sign (segregation of duties).
+		v1.POST("/asset-disposals/:id/approve", appmw.RequirePermission("warehouse.view_asset"), api.ApproveDisposal)
+		v1.POST("/asset-disposals/:id/reject", appmw.RequirePermission("warehouse.view_asset"), api.RejectDisposal)
 		v1.GET("/spare-parts/low-stock", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.LowStock)
 		v1.GET("/spare-parts/by-asset/:asset_tag", appmw.RequireServiceOrPermission("warehouse.view_item"), api.SparePartsByAsset)
 		v1.GET("/spare-compat", appmw.RequirePermission("warehouse.view_item"), api.ListSpareCompat)
@@ -107,6 +114,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/pick-lists/:id", appmw.RequirePermission("warehouse.view_stock"), api.GetPickList)
 		v1.POST("/pick-lists", appmw.RequirePermission("warehouse.add_pick"), api.CreatePickList)
 		v1.POST("/pick-lists/:id/confirm", appmw.RequirePermission("warehouse.confirm_pick"), api.ConfirmPickList)
+		v1.POST("/pick-lists/:id/cancel", appmw.RequirePermission("warehouse.confirm_pick"), api.CancelPickList)
 		v1.POST("/pack-sessions", appmw.RequirePermission("warehouse.add_pack"), api.CreatePackSession)
 
 		admin := v1.Group("/admin")

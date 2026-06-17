@@ -30,8 +30,85 @@ func normalizeKeys(lotKey, serialKey string) (string, string) {
 	return lotKey, serialKey
 }
 
-// deductAvailableBalanceTx removes qty only from an available balance row (blocks hold/damaged).
+// deductAvailableBalanceTx removes qty from a balance row's FREE stock, i.e.
+// available = qty - reserved. It blocks hold/damaged rows and refuses to dip
+// into stock reserved for an open pick list (so an issue/transfer can't take
+// what a pick has already allocated). Reservations default to zero, so for the
+// common unreserved case this behaves exactly as a plain on-hand deduction.
 func (s *Store) deductAvailableBalanceTx(ctx context.Context, tx pgx.Tx, key balanceKey, qty float64) error {
+	if qty <= 0 {
+		return nil
+	}
+	lotKey, serialKey := normalizeKeys(key.LotKey, key.SerialKey)
+	var currentQty, reserved float64
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT qty, reserved, status FROM wh_stock_balances
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4
+		FOR UPDATE`,
+		key.ItemID, key.BinID, lotKey, serialKey,
+	).Scan(&currentQty, &reserved, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInsufficientStock
+	}
+	if err != nil {
+		return err
+	}
+	if status != models.StatusAvailable {
+		return ErrStockNotAvailable
+	}
+	if currentQty-reserved < qty {
+		return ErrInsufficientStock
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE wh_stock_balances SET qty = qty - $5, updated_at = NOW()
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
+		key.ItemID, key.BinID, lotKey, serialKey, qty,
+	)
+	return err
+}
+
+// reserveBalanceTx allocates qty of a balance row's free stock to an open pick
+// list (reserved += qty), failing when the free balance (qty - reserved) can't
+// cover it. Locks the row so concurrent reservations/issues serialize.
+func (s *Store) reserveBalanceTx(ctx context.Context, tx pgx.Tx, key balanceKey, qty float64) error {
+	if qty <= 0 {
+		return nil
+	}
+	lotKey, serialKey := normalizeKeys(key.LotKey, key.SerialKey)
+	var currentQty, reserved float64
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT qty, reserved, status FROM wh_stock_balances
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4
+		FOR UPDATE`,
+		key.ItemID, key.BinID, lotKey, serialKey,
+	).Scan(&currentQty, &reserved, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInsufficientStock
+	}
+	if err != nil {
+		return err
+	}
+	if status != models.StatusAvailable {
+		return ErrStockNotAvailable
+	}
+	if currentQty-reserved < qty {
+		return ErrInsufficientStock
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE wh_stock_balances SET reserved = reserved + $5, updated_at = NOW()
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
+		key.ItemID, key.BinID, lotKey, serialKey, qty,
+	)
+	return err
+}
+
+// consumeReservedTx fulfils a reservation on pick confirm: it removes qty from
+// on-hand and releases the matching reservation (reserved is floored at 0 so a
+// legacy pick created before reservations existed still confirms cleanly). The
+// on-hand check guards against a stale/over-confirmed line.
+func (s *Store) consumeReservedTx(ctx context.Context, tx pgx.Tx, key balanceKey, qty float64) error {
 	if qty <= 0 {
 		return nil
 	}
@@ -56,11 +133,27 @@ func (s *Store) deductAvailableBalanceTx(ctx context.Context, tx pgx.Tx, key bal
 	if currentQty < qty {
 		return ErrInsufficientStock
 	}
-	newQty := currentQty - qty
 	_, err = tx.Exec(ctx, `
-		UPDATE wh_stock_balances SET qty = $5, updated_at = NOW()
+		UPDATE wh_stock_balances
+		SET qty = qty - $5, reserved = GREATEST(reserved - $5, 0), updated_at = NOW()
 		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
-		key.ItemID, key.BinID, lotKey, serialKey, newQty,
+		key.ItemID, key.BinID, lotKey, serialKey, qty,
+	)
+	return err
+}
+
+// releaseReservationTx frees a reservation on pick cancel (reserved -= qty,
+// floored at 0). Lenient: a missing row is a no-op.
+func (s *Store) releaseReservationTx(ctx context.Context, tx pgx.Tx, key balanceKey, qty float64) error {
+	if qty <= 0 {
+		return nil
+	}
+	lotKey, serialKey := normalizeKeys(key.LotKey, key.SerialKey)
+	_, err := tx.Exec(ctx, `
+		UPDATE wh_stock_balances
+		SET reserved = GREATEST(reserved - $5, 0), updated_at = NOW()
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
+		key.ItemID, key.BinID, lotKey, serialKey, qty,
 	)
 	return err
 }
@@ -196,22 +289,24 @@ func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID,
 }
 
 // pickAvailableBinCode chooses a concrete bin to issue an item from when the
-// caller didn't specify one. It prefers the smallest available bin that still
-// holds the full requested qty (best-fit, so large bins aren't fragmented);
-// if no single bin can satisfy the qty it falls back to the fullest bin so the
-// downstream deduction returns a clean ErrInsufficientStock rather than a
-// confusing "bin not found". Lot/serial-tracked lines must still target an
-// exact balance, so the chosen bin is scoped to the (lot, serial) on the line.
+// caller didn't specify one. Selection is FEFO (first-expiry-first-out): bins
+// are ordered by the lot's earliest expiry (untracked/no-expiry stock last),
+// then best-fit by free balance so near-expiry stock leaves first and large bins
+// aren't fragmented. Free balance is qty - reserved, so stock already allocated
+// to a pick isn't offered. If no single bin can satisfy the qty it falls back to
+// the fullest free bin so the downstream deduction returns a clean
+// ErrInsufficientStock. Lot/serial-tracked lines target their exact (lot, serial).
 func (s *Store) pickAvailableBinCode(ctx context.Context, itemID uuid.UUID, qty float64, lotKey, serialKey string) (string, error) {
 	lotKey, serialKey = normalizeKeys(lotKey, serialKey)
+	const expiryOrder = `(SELECT MIN(lt.expiry_on) FROM wh_lots lt WHERE lt.lot_key = b.lot_key AND b.lot_key <> '')`
 	var code string
 	err := s.pool.QueryRow(ctx, `
 		SELECT bn.code
 		FROM wh_stock_balances b
 		JOIN wh_bins bn ON bn.id = b.bin_id
 		WHERE b.item_id = $1 AND b.status = 'available'
-		  AND b.lot_key = $2 AND b.serial_key = $3 AND b.qty >= $4
-		ORDER BY b.qty ASC
+		  AND b.lot_key = $2 AND b.serial_key = $3 AND (b.qty - b.reserved) >= $4
+		ORDER BY `+expiryOrder+` ASC NULLS LAST, (b.qty - b.reserved) ASC
 		LIMIT 1`, itemID, lotKey, serialKey, qty).Scan(&code)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = s.pool.QueryRow(ctx, `
@@ -219,8 +314,8 @@ func (s *Store) pickAvailableBinCode(ctx context.Context, itemID uuid.UUID, qty 
 			FROM wh_stock_balances b
 			JOIN wh_bins bn ON bn.id = b.bin_id
 			WHERE b.item_id = $1 AND b.status = 'available'
-			  AND b.lot_key = $2 AND b.serial_key = $3 AND b.qty > 0
-			ORDER BY b.qty DESC
+			  AND b.lot_key = $2 AND b.serial_key = $3 AND (b.qty - b.reserved) > 0
+			ORDER BY `+expiryOrder+` ASC NULLS LAST, (b.qty - b.reserved) DESC
 			LIMIT 1`, itemID, lotKey, serialKey).Scan(&code)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
