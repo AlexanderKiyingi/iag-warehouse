@@ -41,9 +41,18 @@ GRN automation: procurement emits `procurement.grn.posted`; warehouse creates a 
 
 ### Pick / dispatch
 
-1. `POST /pick-lists` with `order_ref` (DMS order id) and lines.
-2. `POST /pick-lists/:id/confirm` — deducts stock, emits `warehouse.pick.confirmed`.
-3. DMS advances matching orders from `picking` → `delivery`.
+1. `POST /pick-lists` with `order_ref` (DMS order id) and lines — **reserves** stock (`reserved += qty`); the line's free balance must cover it.
+2. `POST /pick-lists/:id/confirm` — consumes the reservation and deducts stock, emits `warehouse.pick.confirmed`.
+3. `POST /pick-lists/:id/cancel` — releases the reservation (open lists only; `409` once confirmed).
+4. DMS advances matching orders from `picking` → `delivery`.
+
+Balances expose `qty`, `reserved`, and `available` (= `qty − reserved`); issues/transfers can only take `available`.
+
+### Asset disposal
+
+1. `POST /assets/:tag/dispose` — `{method, reason, proceeds, currency, book_value?, gate_pass_no?, authorized_by?}`. Executes immediately, or creates a `pending_approval` request when `WAREHOUSE_REQUIRE_DISPOSAL_APPROVAL=true`. Emits `warehouse.asset.disposed` on execution (iag-finance books the gain/loss).
+2. `GET /asset-disposals/approval-tiers` — the amount-band matrix.
+3. `POST /asset-disposals/:id/approve` / `/reject` — tiered, distinct approvers; the disposal executes on the final tier's signature (requester may not approve their own).
 
 ### Read models
 

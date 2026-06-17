@@ -45,6 +45,7 @@ Compose: `UPSTREAM_WAREHOUSE=http://warehouse:4005` on `api-gateway`.
 | `warehouse.production.output` | FG receipt |
 | `warehouse.pick.confirmed` | Pick list confirmed |
 | `warehouse.asset.checked_out` | Equipment custody transfer |
+| `warehouse.asset.disposed` | Asset disposal executed (carries `asset_tag`, `method`, `proceeds`, `currency`, optional `book_value`) — iag-finance books the gain/loss |
 | `warehouse.stock.below_minimum` | Low-stock job |
 | `warehouse.movement.posted` | Inventory handoff (Phase 4 bridge) |
 
@@ -77,4 +78,5 @@ Full stack: `pnpm infra:up` from repo root (includes `warehouse` service on `:40
 | **iag-mes** | Production stages → FG output (optional consumer) |
 | **iag-quality-control** | CoA → release FG hold |
 | **iag-dms** | Pick confirm ↔ dispatch |
+| **iag-finance** | `warehouse.asset.disposed` → gain/loss on disposal + fixed-asset de-recognition |
 | **iag-inventory** | Future qty ledger via `warehouse.movement.posted` |

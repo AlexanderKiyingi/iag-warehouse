@@ -56,7 +56,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Balance rows
+          description: Balance rows (each row includes qty, reserved, and available = qty − reserved)
   /api/v1/items:
     get:
       summary: List items
@@ -147,6 +147,23 @@ paths:
       responses:
         "200":
           description: Pick confirmed
+  /api/v1/pick-lists/{id}/cancel:
+    post:
+      summary: Cancel an open pick list (releases reserved stock)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pick cancelled
+        "409":
+          description: A confirmed pick list cannot be cancelled
   /api/v1/assets/{tag}/check-out:
     post:
       summary: Check out equipment custody
@@ -161,6 +178,83 @@ paths:
       responses:
         "200":
           description: Asset checked out
+  /api/v1/assets/{tag}/dispose:
+    post:
+      summary: Dispose / retire an asset (immediate, or pending approval when tiered approval is enabled)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tag
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, reason]
+              properties:
+                method:
+                  type: string
+                  enum: [sale, scrap, donation, trade_in, write_off, lost]
+                reason: { type: string }
+                proceeds: { type: number }
+                currency: { type: string }
+                book_value: { type: number, nullable: true }
+                gate_pass_no: { type: string }
+                authorized_by: { type: string }
+      responses:
+        "201":
+          description: Disposal recorded (status executed, or pending_approval)
+        "409":
+          description: Asset already disposed or has an open disposal
+  /api/v1/asset-disposals/approval-tiers:
+    get:
+      summary: List the disposal approval tier matrix (amount bands → required permission)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Tier list
+  /api/v1/asset-disposals/{id}/approve:
+    post:
+      summary: Approve a pending disposal at the caller's tier (executes on the final tier)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Disposal record + approval progress
+        "403":
+          description: Missing the tier permission, already signed, or requester self-approval
+        "409":
+          description: Disposal already executed or rejected
+  /api/v1/asset-disposals/{id}/reject:
+    post:
+      summary: Reject a pending disposal
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Disposal rejected
+        "403":
+          description: Missing a tier approval permission
   /api/v1/admin/monitoring/summary:
     get:
       summary: Operator monitoring summary
