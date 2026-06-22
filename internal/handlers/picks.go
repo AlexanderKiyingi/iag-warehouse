@@ -21,7 +21,7 @@ func (a *API) CreatePickList(c *gin.Context) {
 			LotKey  string  `json:"lot_key"`
 		} `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || len(body.Lines) == 0 {
+	if err := bindJSONCoerced(c, &body); err != nil || len(body.Lines) == 0 {
 		badRequest(c, "lines are required")
 		return
 	}

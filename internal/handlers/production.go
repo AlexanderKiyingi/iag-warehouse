@@ -21,7 +21,7 @@ func (a *API) ProductionConsume(c *gin.Context) {
 			LotKey  string  `json:"lot_key"`
 		} `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.BatchBusinessID == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.BatchBusinessID == "" {
 		badRequest(c, "batch_business_id and lines are required")
 		return
 	}
@@ -67,7 +67,7 @@ func (a *API) ProductionOutput(c *gin.Context) {
 		LotKey          string  `json:"lot_key"`
 		QCHold          bool    `json:"qc_hold"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.BatchBusinessID == "" || body.BinCode == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.BatchBusinessID == "" || body.BinCode == "" {
 		badRequest(c, "batch_business_id, item_id, qty, and bin_code are required")
 		return
 	}

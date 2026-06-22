@@ -25,7 +25,7 @@ func (a *API) CreateTransfer(c *gin.Context) {
 			SerialKey   string  `json:"serial_key"`
 		} `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || len(body.Lines) == 0 {
+	if err := bindJSONCoerced(c, &body); err != nil || len(body.Lines) == 0 {
 		badRequest(c, "lines are required")
 		return
 	}
@@ -80,7 +80,7 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		QtyAfter  float64 `json:"qty_after"`
 		Reason    string  `json:"reason"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.ItemID == "" || body.BinCode == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.ItemID == "" || body.BinCode == "" {
 		badRequest(c, "item_id, bin_code, and qty_after are required")
 		return
 	}

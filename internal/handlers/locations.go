@@ -107,7 +107,7 @@ func (a *API) CreateBin(c *gin.Context) {
 		TemperatureBand *string        `json:"temperature_band"`
 		Attrs           map[string]any `json:"attrs"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.Code == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.Code == "" {
 		badRequest(c, "code is required")
 		return
 	}

@@ -28,7 +28,7 @@ func (a *API) CreateReceipt(c *gin.Context) {
 		Notes       string `json:"notes"`
 		Lines       []receiptLineBody `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
 		return
 	}
@@ -67,7 +67,7 @@ func (a *API) CreateReceiptFromGRN(c *gin.Context) {
 		POID  string            `json:"po_id"`
 		Lines []receiptLineBody `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.GRNID == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.GRNID == "" {
 		badRequest(c, "grn_id and lines are required")
 		return
 	}

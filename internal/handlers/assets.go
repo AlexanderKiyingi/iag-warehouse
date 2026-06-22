@@ -112,7 +112,7 @@ func (a *API) DisposeAsset(c *gin.Context) {
 		GatePassNo   string   `json:"gate_pass_no"`
 		AuthorizedBy string   `json:"authorized_by"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || !validDisposalMethods[body.Method] {
+	if err := bindJSONCoerced(c, &body); err != nil || !validDisposalMethods[body.Method] {
 		badRequest(c, "method is required (sale, scrap, donation, trade_in, write_off, lost)")
 		return
 	}

@@ -49,7 +49,7 @@ func (a *API) CreateItem(c *gin.Context) {
 		MaxQty        *float64       `json:"max_qty"`
 		Attrs         map[string]any `json:"attrs"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil || body.SKU == "" || body.Name == "" || body.MaterialClass == "" || body.TrackingMode == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.SKU == "" || body.Name == "" || body.MaterialClass == "" || body.TrackingMode == "" {
 		badRequest(c, "sku, name, material_class, and tracking_mode are required")
 		return
 	}
@@ -91,7 +91,7 @@ func (a *API) PatchItem(c *gin.Context) {
 		MaxQty *float64       `json:"max_qty"`
 		Attrs  map[string]any `json:"attrs"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
 		return
 	}

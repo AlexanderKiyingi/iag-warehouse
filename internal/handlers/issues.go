@@ -98,7 +98,7 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 			SerialKey string  `json:"serial_key"`
 		} `json:"lines"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		return store.CreateIssueInput{}, nil, err
 	}
 	var lines []store.IssueLineInput

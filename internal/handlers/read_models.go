@@ -103,7 +103,7 @@ func (a *API) PatchBin(c *gin.Context) {
 		Status          *string        `json:"status"`
 		Attrs           map[string]any `json:"attrs"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
 		return
 	}
