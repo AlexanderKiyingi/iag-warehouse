@@ -109,6 +109,34 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/spare-compat", appmw.RequirePermission("warehouse.change_item"), api.CreateSpareCompat)
 		v1.DELETE("/spare-compat/:id", appmw.RequirePermission("warehouse.change_item"), api.DeleteSpareCompat)
 
+		// Flat stores-domain records (migration 010): alerts, returns, gate
+		// passes, warranties, event requests — backing the storesiag views.
+		v1.GET("/stock-thresholds", appmw.RequirePermission("warehouse.view_threshold"), api.ListThresholds)
+		v1.POST("/stock-thresholds", appmw.RequirePermission("warehouse.add_threshold"), api.CreateThreshold)
+		v1.PATCH("/stock-thresholds/:id", appmw.RequirePermission("warehouse.change_threshold"), api.UpdateThreshold)
+		v1.DELETE("/stock-thresholds/:id", appmw.RequirePermission("warehouse.change_threshold"), api.DeleteThreshold)
+
+		v1.GET("/returns", appmw.RequirePermission("warehouse.view_return"), api.ListReturns)
+		v1.POST("/returns", appmw.RequirePermission("warehouse.add_return"), api.CreateReturn)
+		v1.PATCH("/returns/:id", appmw.RequirePermission("warehouse.change_return"), api.UpdateReturn)
+		v1.DELETE("/returns/:id", appmw.RequirePermission("warehouse.change_return"), api.DeleteReturn)
+
+		v1.GET("/gate-passes", appmw.RequirePermission("warehouse.view_gatepass"), api.ListGatePasses)
+		v1.POST("/gate-passes", appmw.RequirePermission("warehouse.add_gatepass"), api.CreateGatePass)
+		v1.PATCH("/gate-passes/:id", appmw.RequirePermission("warehouse.change_gatepass"), api.UpdateGatePass)
+		v1.POST("/gate-passes/:id/return", appmw.RequirePermission("warehouse.change_gatepass"), api.ReturnGatePass)
+		v1.DELETE("/gate-passes/:id", appmw.RequirePermission("warehouse.change_gatepass"), api.DeleteGatePass)
+
+		v1.GET("/warranties", appmw.RequirePermission("warehouse.view_warranty"), api.ListWarranties)
+		v1.POST("/warranties", appmw.RequirePermission("warehouse.add_warranty"), api.CreateWarranty)
+		v1.PATCH("/warranties/:id", appmw.RequirePermission("warehouse.change_warranty"), api.UpdateWarranty)
+		v1.DELETE("/warranties/:id", appmw.RequirePermission("warehouse.change_warranty"), api.DeleteWarranty)
+
+		v1.GET("/event-requests", appmw.RequirePermission("warehouse.view_event"), api.ListEventRequests)
+		v1.POST("/event-requests", appmw.RequirePermission("warehouse.add_event"), api.CreateEventRequest)
+		v1.PATCH("/event-requests/:id", appmw.RequirePermission("warehouse.change_event"), api.UpdateEventRequest)
+		v1.DELETE("/event-requests/:id", appmw.RequirePermission("warehouse.change_event"), api.DeleteEventRequest)
+
 		v1.GET("/movements", appmw.RequirePermission("warehouse.view_stock"), api.ListMovements)
 		v1.GET("/pick-lists", appmw.RequirePermission("warehouse.view_stock"), api.ListPickLists)
 		v1.GET("/pick-lists/:id", appmw.RequirePermission("warehouse.view_stock"), api.GetPickList)
