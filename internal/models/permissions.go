@@ -53,6 +53,9 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{"warehouse.view_event", "View event / furniture requests"},
 		{"warehouse.add_event", "Create event / furniture requests"},
 		{"warehouse.change_event", "Update / delete event / furniture requests"},
+		{"warehouse.view_tool", "View small-tools register"},
+		{"warehouse.add_tool", "Tag / register small tools"},
+		{"warehouse.change_tool", "Update / delete small-tools records"},
 		{"warehouse.admin.read", "Staff audit and monitoring"},
 	}
 }

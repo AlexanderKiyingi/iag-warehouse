@@ -145,6 +145,15 @@ func (a *API) DisposeAsset(c *gin.Context) {
 	})
 }
 
+func (a *API) ListDisposals(c *gin.Context) {
+	items, err := a.Store.ListDisposals(c.Request.Context(), c.Query("status"), 100)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
 func (a *API) ListDisposalApprovalTiers(c *gin.Context) {
 	tiers, err := a.Store.ListDisposalApprovalTiers(c.Request.Context())
 	if err != nil {

@@ -97,6 +97,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/assets/:tag/check-in", appmw.RequirePermission("warehouse.checkin_asset"), api.CheckInAsset)
 		v1.POST("/assets/:tag/check-out", appmw.RequirePermission("warehouse.checkout_asset"), api.CheckOutAsset)
 		v1.POST("/assets/:tag/dispose", appmw.RequirePermission("warehouse.dispose_asset"), api.DisposeAsset)
+		v1.GET("/asset-disposals", appmw.RequirePermission("warehouse.view_asset"), api.ListDisposals)
 		v1.GET("/asset-disposals/approval-tiers", appmw.RequirePermission("warehouse.view_asset"), api.ListDisposalApprovalTiers)
 		// Approval routes use a low coarse gate (view_asset); the real authority is
 		// the per-tier permission checked inside, so a tier approver who is not a
@@ -136,6 +137,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/event-requests", appmw.RequirePermission("warehouse.add_event"), api.CreateEventRequest)
 		v1.PATCH("/event-requests/:id", appmw.RequirePermission("warehouse.change_event"), api.UpdateEventRequest)
 		v1.DELETE("/event-requests/:id", appmw.RequirePermission("warehouse.change_event"), api.DeleteEventRequest)
+
+		v1.GET("/small-tools", appmw.RequirePermission("warehouse.view_tool"), api.ListSmallTools)
+		v1.POST("/small-tools", appmw.RequirePermission("warehouse.add_tool"), api.CreateSmallTool)
+		v1.PATCH("/small-tools/:id", appmw.RequirePermission("warehouse.change_tool"), api.UpdateSmallTool)
+		v1.DELETE("/small-tools/:id", appmw.RequirePermission("warehouse.change_tool"), api.DeleteSmallTool)
 
 		v1.GET("/movements", appmw.RequirePermission("warehouse.view_stock"), api.ListMovements)
 		v1.GET("/pick-lists", appmw.RequirePermission("warehouse.view_stock"), api.ListPickLists)

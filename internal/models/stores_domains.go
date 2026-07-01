@@ -83,3 +83,19 @@ type EventRequest struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+type SmallTool struct {
+	ID        uuid.UUID `json:"id"`
+	TagNo     string    `json:"tag_no"`
+	Name      string    `json:"name"`
+	Category  string    `json:"category"`
+	Custodian string    `json:"custodian"`
+	Dept      string    `json:"dept"`
+	Issued    string    `json:"issued"`
+	ReturnBy  string    `json:"return_by"`
+	Condition string    `json:"condition"`
+	Status    string    `json:"status"`
+	Notes     string    `json:"notes"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

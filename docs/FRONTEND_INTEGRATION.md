@@ -23,7 +23,26 @@ Obtain tokens from `POST /api/v1/authentication/oauth/token`. The JWT must inclu
 
 ### Bootstrap
 
-`GET /bootstrap` — facility list, recent receipts/issues, low-stock summary. Requires `warehouse.view_overview`.
+`GET /bootstrap` — facilities, recent receipts/issues (last 8), low-stock summary, and pending disposal count. Requires `warehouse.view_overview`.
+
+```json
+{
+  "service": "iag-warehouse",
+  "gateway": "/api/v1/warehouse",
+  "facilities": [],
+  "recent_receipts": { "items": [] },
+  "recent_issues": { "items": [] },
+  "low_stock": { "items": [] },
+  "pending_disposals": 0
+}
+```
+
+### Stores-domain flat records
+
+| Endpoint | Permission | Purpose |
+|---|---|---|
+| `GET/POST/PATCH/DELETE /small-tools` | `warehouse.view_tool` / `add_tool` / `change_tool` | Small-tools custodian register |
+| `GET /asset-disposals?status=` | `warehouse.view_asset` | Disposal history list |
 
 ### Receipts (inbound)
 

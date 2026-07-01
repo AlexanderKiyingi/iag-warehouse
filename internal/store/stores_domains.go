@@ -270,6 +270,55 @@ func (s *Store) DeleteEventRequest(ctx context.Context, id uuid.UUID) error {
 	return s.deleteByID(ctx, `DELETE FROM wh_event_requests WHERE id=$1`, id)
 }
 
+// --- small tools ------------------------------------------------------------
+
+const smallToolCols = `id, tag_no, name, category, custodian, dept, issued, return_by, condition, status, notes, created_at, updated_at`
+
+func scanSmallTool(row pgx.Row) (models.SmallTool, error) {
+	var t models.SmallTool
+	err := row.Scan(&t.ID, &t.TagNo, &t.Name, &t.Category, &t.Custodian, &t.Dept, &t.Issued, &t.ReturnBy, &t.Condition, &t.Status, &t.Notes, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func (s *Store) ListSmallTools(ctx context.Context) ([]models.SmallTool, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+smallToolCols+` FROM wh_small_tools ORDER BY tag_no, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.SmallTool{}
+	for rows.Next() {
+		t, err := scanSmallTool(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateSmallTool(ctx context.Context, t models.SmallTool) (models.SmallTool, error) {
+	return scanSmallTool(s.pool.QueryRow(ctx, `
+		INSERT INTO wh_small_tools (tag_no, name, category, custodian, dept, issued, return_by, condition, status, notes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, ''), 'Good'), COALESCE(NULLIF($9, ''), 'In Store'), $10)
+		RETURNING `+smallToolCols, t.TagNo, t.Name, t.Category, t.Custodian, t.Dept, t.Issued, t.ReturnBy, t.Condition, t.Status, t.Notes))
+}
+
+func (s *Store) UpdateSmallTool(ctx context.Context, id uuid.UUID, t models.SmallTool) (models.SmallTool, error) {
+	out, err := scanSmallTool(s.pool.QueryRow(ctx, `
+		UPDATE wh_small_tools SET tag_no=$2, name=$3, category=$4, custodian=$5, dept=$6, issued=$7, return_by=$8,
+			condition=COALESCE(NULLIF($9, ''), condition), status=COALESCE(NULLIF($10, ''), status), notes=$11, updated_at=NOW()
+		WHERE id=$1 RETURNING `+smallToolCols, id, t.TagNo, t.Name, t.Category, t.Custodian, t.Dept, t.Issued, t.ReturnBy, t.Condition, t.Status, t.Notes))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SmallTool{}, ErrNotFound
+	}
+	return out, err
+}
+
+func (s *Store) DeleteSmallTool(ctx context.Context, id uuid.UUID) error {
+	return s.deleteByID(ctx, `DELETE FROM wh_small_tools WHERE id=$1`, id)
+}
+
 // --- shared -----------------------------------------------------------------
 
 func (s *Store) deleteByID(ctx context.Context, query string, id uuid.UUID) error {

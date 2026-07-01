@@ -41,6 +41,39 @@ func (s *Store) getDisposal(ctx context.Context, id uuid.UUID) (models.AssetDisp
 	return d, err
 }
 
+func (s *Store) ListDisposals(ctx context.Context, status string, limit int) ([]models.AssetDisposal, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	q := `SELECT ` + disposalCols + ` FROM wh_asset_disposals`
+	args := []any{}
+	if strings.TrimSpace(status) != "" {
+		q += ` WHERE status = $1`
+		args = append(args, status)
+	}
+	q += ` ORDER BY created_at DESC LIMIT ` + fmt.Sprintf("%d", limit)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.AssetDisposal{}
+	for rows.Next() {
+		d, err := scanDisposalRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountPendingDisposals(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM wh_asset_disposals WHERE status = 'pending_approval'`).Scan(&n)
+	return n, err
+}
+
 // executeDisposalTx retires the asset, posts the disposal movement, and emits
 // warehouse.asset.disposed — shared by the immediate path and final approval.
 func (s *Store) executeDisposalTx(ctx context.Context, tx pgx.Tx, disposalID uuid.UUID, actorID *uuid.UUID) error {

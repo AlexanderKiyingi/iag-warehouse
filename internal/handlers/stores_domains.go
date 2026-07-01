@@ -319,3 +319,59 @@ func (a *API) DeleteEventRequest(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// --- small tools ------------------------------------------------------------
+
+func (a *API) ListSmallTools(c *gin.Context) {
+	items, err := a.Store.ListSmallTools(c.Request.Context())
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+func (a *API) CreateSmallTool(c *gin.Context) {
+	var body models.SmallTool
+	if err := bindJSONCoerced(c, &body); err != nil || strings.TrimSpace(body.Name) == "" {
+		badRequest(c, "name is required")
+		return
+	}
+	a.withIdempotency(c, func() (int, any) {
+		row, err := a.Store.CreateSmallTool(c.Request.Context(), body)
+		if err != nil {
+			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+		}
+		return http.StatusCreated, row
+	})
+}
+
+func (a *API) UpdateSmallTool(c *gin.Context) {
+	id, okID := parsePathID(c)
+	if !okID {
+		return
+	}
+	var body models.SmallTool
+	if err := bindJSONCoerced(c, &body); err != nil {
+		badRequest(c, "invalid JSON")
+		return
+	}
+	row, err := a.Store.UpdateSmallTool(c.Request.Context(), id, body)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, row)
+}
+
+func (a *API) DeleteSmallTool(c *gin.Context) {
+	id, okID := parsePathID(c)
+	if !okID {
+		return
+	}
+	if err := a.Store.DeleteSmallTool(c.Request.Context(), id); err != nil {
+		storeErr(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

@@ -26,10 +26,19 @@ func (a *API) PlatformStatus(c *gin.Context) {
 }
 
 func (a *API) Bootstrap(c *gin.Context) {
-	facilities, _ := a.Store.ListFacilities(c.Request.Context())
+	ctx := c.Request.Context()
+	facilities, _ := a.Store.ListFacilities(ctx)
+	receipts, _ := a.Store.ListReceipts(ctx, "", 8)
+	issues, _ := a.Store.ListIssues(ctx, "", 8)
+	lowStock, _ := a.Store.ListLowStock(ctx)
+	pendingDisposals, _ := a.Store.CountPendingDisposals(ctx)
 	c.JSON(http.StatusOK, gin.H{
-		"service":    a.Cfg.ServiceName,
-		"facilities": facilities,
-		"gateway":    a.Cfg.GatewayAPIPrefix,
+		"service":           a.Cfg.ServiceName,
+		"facilities":        facilities,
+		"gateway":           a.Cfg.GatewayAPIPrefix,
+		"recent_receipts":   gin.H{"items": receipts},
+		"recent_issues":     gin.H{"items": issues},
+		"low_stock":         gin.H{"items": lowStock},
+		"pending_disposals": pendingDisposals,
 	})
 }
