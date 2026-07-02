@@ -263,7 +263,7 @@ func (s *Store) ListLowStock(ctx context.Context) ([]LowStockItem, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string) {
+func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost) {
 	if s.invBridge == nil {
 		return
 	}
@@ -275,6 +275,13 @@ func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID,
 		Qty:          qty,
 		LotKey:       lotKey,
 		SerialKey:    serialKey,
+		// Valuation (zero unless costing enabled + priced) — finance books the GL
+		// from these; a zero total_cost is a no-op downstream.
+		UnitCost:     cost.UnitCost,
+		TotalCost:    cost.TotalCost,
+		AvgCostAfter: cost.AvgCostAfter,
+		Ref:          cost.Ref,
+		Currency:     cost.Currency,
 	}
 	if fromBin != nil {
 		payload.FromBinID = fromBin.String()

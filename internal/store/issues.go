@@ -216,7 +216,11 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 		if err != nil {
 			return models.Issue{}, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil)
+		cost, err := s.outboundCostTx(ctx, tx, l.itemID, l.qty, issueID.String())
+		if err != nil {
+			return models.Issue{}, err
+		}
+		s.emitInventoryMovement(ctx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil, cost)
 		eventLines = append(eventLines, map[string]any{
 			"item_id": l.itemID.String(),
 			"sku":     l.sku,

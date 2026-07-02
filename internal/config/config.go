@@ -43,6 +43,14 @@ type Config struct {
 	// the asset once its amount-band tiers have signed. Default false keeps
 	// disposal immediate. Set via WAREHOUSE_REQUIRE_DISPOSAL_APPROVAL.
 	RequireDisposalApproval bool
+	// InventoryCostingEnabled turns on weighted-average costing: priced receipts
+	// recompute item avg_cost and valued movement events (unit/total/avg cost)
+	// are emitted for finance to book the perpetual-inventory GL. Default false —
+	// movements stay cost-less and finance's inventory consumer no-ops. Set via
+	// INVENTORY_COSTING_ENABLED. See docs/PERPETUAL_INVENTORY_EVENTS.md.
+	InventoryCostingEnabled bool
+	// BaseCurrency stamps the valuation figures on movement events. Default UGX.
+	BaseCurrency string
 }
 
 func Load() (*Config, error) {
@@ -82,6 +90,8 @@ func Load() (*Config, error) {
 		KafkaQualityTopic:     getenv("KAFKA_QUALITY_TOPIC", "iag.quality"),
 		KafkaSupplyChainTopic: getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
 		EventBusEnabled:       strings.EqualFold(getenv("EVENT_BUS_ENABLED", "true"), "true"),
+		InventoryCostingEnabled: strings.EqualFold(os.Getenv("INVENTORY_COSTING_ENABLED"), "true"),
+		BaseCurrency:          getenv("BASE_CURRENCY", "UGX"),
 	}
 
 	if c.DatabaseURL == "" {

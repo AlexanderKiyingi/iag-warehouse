@@ -18,6 +18,7 @@ type ReceiptLineInput struct {
 	BinCode         string
 	LotKey          string
 	BatchBusinessID *string
+	UnitCost        float64 // purchase cost per unit (from PO/GRN); 0 = unpriced
 }
 
 type CreateReceiptInput struct {
@@ -56,10 +57,10 @@ func (s *Store) CreateReceipt(ctx context.Context, in CreateReceiptInput) (model
 		lotKey, _ := normalizeKeys(line.LotKey, "")
 		var rl models.ReceiptLine
 		err = tx.QueryRow(ctx, `
-			INSERT INTO wh_receipt_lines (receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO wh_receipt_lines (receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id, unit_cost)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			RETURNING id, receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id`,
-			receipt.ID, line.ItemID, line.Qty, line.UOM, bin.ID, lotKey, line.BatchBusinessID,
+			receipt.ID, line.ItemID, line.Qty, line.UOM, bin.ID, lotKey, line.BatchBusinessID, line.UnitCost,
 		).Scan(&rl.ID, &rl.ReceiptID, &rl.ItemID, &rl.Qty, &rl.UOM, &rl.BinID, &rl.LotKey, &rl.BatchBusinessID)
 		if err != nil {
 			return receipt, err
@@ -150,7 +151,7 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT rl.item_id, rl.qty, rl.bin_id, rl.lot_key, rl.batch_business_id, i.sku
+		SELECT rl.item_id, rl.qty, rl.bin_id, rl.lot_key, rl.batch_business_id, i.sku, rl.unit_cost
 		FROM wh_receipt_lines rl
 		JOIN wh_items i ON i.id = rl.item_id
 		WHERE rl.receipt_id = $1`, receiptID)
@@ -164,11 +165,12 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 		lotKey    string
 		batchID   *string
 		sku       string
+		unitCost  float64
 	}
 	var lines []lineRow
 	for rows.Next() {
 		var l lineRow
-		if err := rows.Scan(&l.itemID, &l.qty, &l.binID, &l.lotKey, &l.batchID, &l.sku); err != nil {
+		if err := rows.Scan(&l.itemID, &l.qty, &l.binID, &l.lotKey, &l.batchID, &l.sku, &l.unitCost); err != nil {
 			rows.Close()
 			return models.Receipt{}, err
 		}
@@ -183,6 +185,13 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 	var eventLines []map[string]any
 	for _, l := range lines {
 		lotKey, serialKey := normalizeKeys(l.lotKey, "")
+		// Recompute moving-average cost BEFORE applying this line's quantity, so
+		// on-hand reflects the pre-receipt balance (no-op when costing is off or
+		// the line is unpriced).
+		cost, err := s.applyReceiptCostTx(ctx, tx, l.itemID, l.qty, l.unitCost, receiptID.String())
+		if err != nil {
+			return models.Receipt{}, err
+		}
 		if err := s.adjustBalanceTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, serialKey}, l.qty, models.StatusAvailable); err != nil {
 			return models.Receipt{}, err
 		}
@@ -201,7 +210,7 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 		if err != nil {
 			return models.Receipt{}, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID)
+		s.emitInventoryMovement(ctx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID, cost)
 		eventLines = append(eventLines, map[string]any{
 			"item_id": l.itemID.String(),
 			"sku":     l.sku,

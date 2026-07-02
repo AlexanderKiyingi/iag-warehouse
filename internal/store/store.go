@@ -21,10 +21,23 @@ type Store struct {
 	pool    *pgxpool.Pool
 	bus     *events.Bus
 	invBridge *inventory.Bridge
+	// costingEnabled turns on weighted-average costing on valued movement paths
+	// (receipt/issue/adjustment). Off → movements carry no cost and finance no-ops.
+	costingEnabled bool
+	baseCurrency   string
 }
 
 func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+	return &Store{pool: pool, baseCurrency: "UGX"}
+}
+
+// SetCosting enables weighted-average costing and sets the base currency stamped
+// on valued movement events.
+func (s *Store) SetCosting(enabled bool, baseCurrency string) {
+	s.costingEnabled = enabled
+	if baseCurrency != "" {
+		s.baseCurrency = baseCurrency
+	}
 }
 
 func (s *Store) SetEventBus(bus *events.Bus) {

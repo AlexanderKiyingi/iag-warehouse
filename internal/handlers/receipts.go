@@ -121,6 +121,7 @@ type receiptLineBody struct {
 	BinCode         string  `json:"bin_code"`
 	LotKey          string  `json:"lot_key"`
 	BatchBusinessID string  `json:"batch_business_id"`
+	UnitCost        float64 `json:"unit_cost"` // purchase cost per unit (from PO/GRN)
 }
 
 func receiptLinesFromBody(lines []receiptLineBody) ([]store.ReceiptLineInput, error) {
@@ -136,7 +137,7 @@ func receiptLinesFromBody(lines []receiptLineBody) ([]store.ReceiptLineInput, er
 		}
 		out = append(out, store.ReceiptLineInput{
 			ItemID: itemID, Qty: l.Qty, UOM: uom, BinCode: l.BinCode,
-			LotKey: l.LotKey, BatchBusinessID: strPtr(l.BatchBusinessID),
+			LotKey: l.LotKey, BatchBusinessID: strPtr(l.BatchBusinessID), UnitCost: l.UnitCost,
 		})
 	}
 	return out, nil

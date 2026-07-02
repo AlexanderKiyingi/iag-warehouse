@@ -58,7 +58,9 @@ func (s *Store) ProductionConsume(ctx context.Context, in ProductionConsumeInput
 		if err != nil {
 			return nil, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID)
+		// Production consume/output move value through WIP, not COGS — finance
+		// does not yet book these, so they emit no valuation (see roadmap).
+		s.emitInventoryMovement(ctx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID, movementCost{})
 		eventLines = append(eventLines, map[string]any{
 			"item_id": line.ItemID.String(),
 			"qty":     line.Qty,
@@ -142,7 +144,7 @@ func (s *Store) ProductionOutput(ctx context.Context, in ProductionOutputInput) 
 		return nil, err
 	}
 	sku, _ := s.getItemSKU(ctx, tx, in.ItemID)
-	s.emitInventoryMovement(ctx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID)
+	s.emitInventoryMovement(ctx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID, movementCost{})
 
 	if s.bus != nil && s.bus.Enabled() {
 		data := map[string]any{

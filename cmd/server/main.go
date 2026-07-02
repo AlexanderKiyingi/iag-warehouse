@@ -67,6 +67,7 @@ func main() {
 	})
 	bus.SetOutbox(outboxStore)
 	st.SetEventBus(bus)
+	st.SetCosting(cfg.InventoryCostingEnabled, cfg.BaseCurrency)
 	defer bus.Close()
 
 	if bus.Enabled() {

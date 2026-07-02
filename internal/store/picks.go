@@ -138,7 +138,9 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 		if err != nil {
 			return models.PickList{}, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, "", nil)
+		// A pick is an internal allocation, not a costed goods-out event (the
+		// subsequent issue/dispatch carries COGS), so it emits no valuation.
+		s.emitInventoryMovement(ctx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, "", nil, movementCost{})
 		eventLines = append(eventLines, map[string]any{
 			"item_id": l.itemID.String(),
 			"sku":     l.sku,
