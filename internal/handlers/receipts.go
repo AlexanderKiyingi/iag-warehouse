@@ -21,11 +21,13 @@ func (a *API) ListReceipts(c *gin.Context) {
 
 func (a *API) CreateReceipt(c *gin.Context) {
 	var body struct {
-		ReceiptType string `json:"receipt_type"`
-		SourceRef   string `json:"source_ref"`
-		GRNID       string `json:"grn_id"`
-		POID        string `json:"po_id"`
-		Notes       string `json:"notes"`
+		ReceiptType string            `json:"receipt_type"`
+		SourceRef   string            `json:"source_ref"`
+		GRNID       string            `json:"grn_id"`
+		POID        string            `json:"po_id"`
+		Supplier    string            `json:"supplier"`
+		ReceivedBy  string            `json:"received_by"`
+		Notes       string            `json:"notes"`
 		Lines       []receiptLineBody `json:"lines"`
 	}
 	if err := bindJSONCoerced(c, &body); err != nil {
@@ -50,6 +52,8 @@ func (a *API) CreateReceipt(c *gin.Context) {
 			SourceRef:   strPtr(body.SourceRef),
 			GRNID:       strPtr(body.GRNID),
 			POID:        strPtr(body.POID),
+			Supplier:    strPtr(body.Supplier),
+			ReceivedBy:  strPtr(body.ReceivedBy),
 			Notes:       strPtr(body.Notes),
 			Lines:       lines,
 			CreatedBy:   createdBy,

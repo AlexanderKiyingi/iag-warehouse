@@ -87,6 +87,8 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 		CostCenter         string `json:"cost_center"`
 		ProductionOrderRef string `json:"production_order_ref"`
 		WorkOrderRef       string `json:"work_order_ref"`
+		RequestedBy        string `json:"requested_by"`
+		Priority           string `json:"priority"`
 		BatchBusinessID    string `json:"batch_business_id"`
 		Notes              string `json:"notes"`
 		Lines              []struct {
@@ -124,6 +126,8 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 		CostCenter:         strPtr(body.CostCenter),
 		ProductionOrderRef: strPtr(body.ProductionOrderRef),
 		WorkOrderRef:       strPtr(body.WorkOrderRef),
+		RequestedBy:        strPtr(body.RequestedBy),
+		Priority:           strPtr(body.Priority),
 		BatchBusinessID:    strPtr(body.BatchBusinessID),
 		Notes:              strPtr(body.Notes),
 		Lines:              lines,

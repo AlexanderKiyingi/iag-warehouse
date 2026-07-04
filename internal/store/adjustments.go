@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -107,6 +108,43 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 		return adj, err
 	}
 	return adj, nil
+}
+
+// ListAdjustments returns adjustment/cycle-count records joined to item and bin
+// display fields. adjType filters by 'adjustment' or 'cycle_count' when set.
+func (s *Store) ListAdjustments(ctx context.Context, adjType string, limit int) ([]models.Adjustment, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	query := `
+		SELECT a.id, a.adj_type, a.item_id, a.bin_id, a.lot_key, a.serial_key, a.qty_before, a.qty_after,
+			a.reason, a.actor_id, a.created_at, i.sku, i.name, b.code
+		FROM wh_adjustments a
+		JOIN wh_items i ON i.id = a.item_id
+		JOIN wh_bins b ON b.id = a.bin_id`
+	var args []any
+	if adjType != "" {
+		args = append(args, adjType)
+		query += ` WHERE a.adj_type = $1`
+	}
+	args = append(args, limit)
+	query += ` ORDER BY a.created_at DESC LIMIT $` + strconv.Itoa(len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Adjustment{}
+	for rows.Next() {
+		var a models.Adjustment
+		if err := rows.Scan(&a.ID, &a.AdjType, &a.ItemID, &a.BinID, &a.LotKey, &a.SerialKey,
+			&a.QtyBefore, &a.QtyAfter, &a.Reason, &a.ActorID, &a.CreatedAt, &a.ItemSKU, &a.ItemName, &a.BinCode); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 func ptrIf(cond bool, id uuid.UUID) *uuid.UUID {

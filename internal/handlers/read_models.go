@@ -60,6 +60,71 @@ func (a *API) GetPickList(c *gin.Context) {
 	ok(c, pl)
 }
 
+func (a *API) ListAdjustments(c *gin.Context) {
+	items, err := a.Store.ListAdjustments(c.Request.Context(), c.Query("adj_type"), 100)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+// ListCycleCounts is ListAdjustments pre-filtered to cycle counts.
+func (a *API) ListCycleCounts(c *gin.Context) {
+	items, err := a.Store.ListAdjustments(c.Request.Context(), "cycle_count", 100)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+func (a *API) ListTransfers(c *gin.Context) {
+	items, err := a.Store.ListTransfers(c.Request.Context(), c.Query("status"), 100)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+func (a *API) GetTransfer(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		badRequest(c, "invalid transfer id")
+		return
+	}
+	tr, err := a.Store.GetTransfer(c.Request.Context(), id)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, tr)
+}
+
+func (a *API) ListPackSessions(c *gin.Context) {
+	items, err := a.Store.ListPackSessions(c.Request.Context(), 100)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+func (a *API) GetPackSession(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		badRequest(c, "invalid pack session id")
+		return
+	}
+	p, err := a.Store.GetPackSession(c.Request.Context(), id)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, p)
+}
+
 func (a *API) ListMovements(c *gin.Context) {
 	var itemID *uuid.UUID
 	if raw := c.Query("item_id"); raw != "" {

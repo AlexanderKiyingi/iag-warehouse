@@ -45,4 +45,10 @@ echo "created ${GPID}"
 curl -fsS "${AUTH[@]}" -X POST "${BASE}/gate-passes/${GPID}/return" -d '{"return_date":"2026-06-30"}' >/dev/null && echo "return ok"
 curl -fsS "${AUTH[@]}" -X DELETE "${BASE}/gate-passes/${GPID}" >/dev/null && echo "delete ok"
 
+# New capability read endpoints (list-only GETs the storesiag views hydrate from).
+say "capability reads"
+for p in /adjustments /cycle-counts /transfers /pack-sessions /movements /spare-compat; do
+  curl -fsS "${AUTH[@]}" "${BASE}${p}" >/dev/null && echo "GET ${p} ok"
+done
+
 say "ALL STORES-DOMAIN SMOKE CHECKS PASSED"

@@ -111,12 +111,17 @@ type Receipt struct {
 	SourceRef   *string       `json:"source_ref,omitempty"`
 	GRNID       *string       `json:"grn_id,omitempty"`
 	POID        *string       `json:"po_id,omitempty"`
+	Supplier    *string       `json:"supplier,omitempty"`
+	ReceivedBy  *string       `json:"received_by,omitempty"`
 	Notes       *string       `json:"notes,omitempty"`
-	PostedAt    *time.Time    `json:"posted_at,omitempty"`
-	CreatedBy   *uuid.UUID    `json:"created_by,omitempty"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	Lines       []ReceiptLine `json:"lines,omitempty"`
+	// Value is the receipt's total cost, computed on read from the priced lines
+	// (Σ qty*unit_cost) — not a stored column.
+	Value     float64       `json:"value"`
+	PostedAt  *time.Time    `json:"posted_at,omitempty"`
+	CreatedBy *uuid.UUID    `json:"created_by,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Lines     []ReceiptLine `json:"lines,omitempty"`
 }
 
 type ReceiptLine struct {
@@ -139,6 +144,8 @@ type Issue struct {
 	CostCenter         *string     `json:"cost_center,omitempty"`
 	ProductionOrderRef *string     `json:"production_order_ref,omitempty"`
 	WorkOrderRef       *string     `json:"work_order_ref,omitempty"`
+	RequestedBy        *string     `json:"requested_by,omitempty"`
+	Priority           *string     `json:"priority,omitempty"`
 	BatchBusinessID    *string     `json:"batch_business_id,omitempty"`
 	Notes              *string     `json:"notes,omitempty"`
 	PostedAt           *time.Time  `json:"posted_at,omitempty"`
@@ -255,6 +262,20 @@ type Adjustment struct {
 	Reason    *string    `json:"reason,omitempty"`
 	ActorID   *uuid.UUID `json:"actor_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
+	// Display joins, populated by list reads (not stored on wh_adjustments).
+	ItemSKU  string `json:"item_sku,omitempty"`
+	ItemName string `json:"item_name,omitempty"`
+	BinCode  string `json:"bin_code,omitempty"`
+}
+
+// PackSession is a packing record created from a confirmed pick list.
+type PackSession struct {
+	ID         uuid.UUID      `json:"id"`
+	PickListID *uuid.UUID     `json:"pick_list_id,omitempty"`
+	Status     string         `json:"status"`
+	Attrs      map[string]any `json:"attrs,omitempty"`
+	CreatedBy  *uuid.UUID     `json:"created_by,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
 }
 
 type Movement struct {

@@ -88,8 +88,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/production/consume", appmw.RequireServiceOrPermission("warehouse.production_consume"), api.ProductionConsume)
 		v1.POST("/production/output", appmw.RequireServiceOrPermission("warehouse.production_output"), api.ProductionOutput)
 
+		v1.GET("/transfers", appmw.RequirePermission("warehouse.view_transfer"), api.ListTransfers)
+		v1.GET("/transfers/:id", appmw.RequirePermission("warehouse.view_transfer"), api.GetTransfer)
 		v1.POST("/transfers", appmw.RequirePermission("warehouse.add_transfer"), api.CreateTransfer)
+		v1.GET("/adjustments", appmw.RequirePermission("warehouse.view_stock"), api.ListAdjustments)
 		v1.POST("/adjustments", appmw.RequirePermission("warehouse.adjust_stock"), api.CreateAdjustment)
+		v1.GET("/cycle-counts", appmw.RequirePermission("warehouse.view_stock"), api.ListCycleCounts)
 		v1.POST("/cycle-counts", appmw.RequirePermission("warehouse.cycle_count"), api.CreateCycleCount)
 
 		v1.GET("/assets", appmw.RequirePermission("warehouse.view_asset"), api.ListAssets)
@@ -149,6 +153,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/pick-lists", appmw.RequirePermission("warehouse.add_pick"), api.CreatePickList)
 		v1.POST("/pick-lists/:id/confirm", appmw.RequirePermission("warehouse.confirm_pick"), api.ConfirmPickList)
 		v1.POST("/pick-lists/:id/cancel", appmw.RequirePermission("warehouse.confirm_pick"), api.CancelPickList)
+		v1.GET("/pack-sessions", appmw.RequirePermission("warehouse.view_pack"), api.ListPackSessions)
+		v1.GET("/pack-sessions/:id", appmw.RequirePermission("warehouse.view_pack"), api.GetPackSession)
 		v1.POST("/pack-sessions", appmw.RequirePermission("warehouse.add_pack"), api.CreatePackSession)
 
 		admin := v1.Group("/admin")

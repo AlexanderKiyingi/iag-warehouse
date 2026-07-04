@@ -128,4 +128,45 @@ func TestStoresDomainsCRUD(t *testing.T) {
 			t.Fatalf("delete: %v", err)
 		}
 	})
+
+	// Partial-update contract: an update that omits a text field must PRESERVE
+	// the stored value (COALESCE(NULLIF(...))), not blank it. Regression guard for
+	// the gate-pass return_date being wiped by a later edit.
+	t.Run("gatepass_partial_update_preserves", func(t *testing.T) {
+		c, err := s.CreateGatePass(ctx, models.GatePass{Items: "Drill", IssuedTo: "Tester", Dept: "Maint", ReturnDate: "2026-07-05"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		// Edit only the department; leave return_date empty in the incoming model.
+		c.Dept = "Workshop"
+		c.ReturnDate = ""
+		u, err := s.UpdateGatePass(ctx, c.ID, c)
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if u.Dept != "Workshop" {
+			t.Fatalf("dept not applied: %q", u.Dept)
+		}
+		if u.ReturnDate != "2026-07-05" {
+			t.Fatalf("return_date was blanked by partial update: %q", u.ReturnDate)
+		}
+		_ = s.DeleteGatePass(ctx, c.ID)
+	})
+
+	// The new capability read endpoints must run cleanly against the schema even
+	// with no seeded rows (empty, non-nil slices).
+	t.Run("capability_reads", func(t *testing.T) {
+		if _, err := s.ListAdjustments(ctx, "", 50); err != nil {
+			t.Fatalf("list adjustments: %v", err)
+		}
+		if _, err := s.ListAdjustments(ctx, "cycle_count", 50); err != nil {
+			t.Fatalf("list cycle counts: %v", err)
+		}
+		if _, err := s.ListTransfers(ctx, "", 50); err != nil {
+			t.Fatalf("list transfers: %v", err)
+		}
+		if _, err := s.ListPackSessions(ctx, 50); err != nil {
+			t.Fatalf("list pack sessions: %v", err)
+		}
+	})
 }

@@ -26,9 +26,24 @@ type CreateReceiptInput struct {
 	SourceRef   *string
 	GRNID       *string
 	POID        *string
+	Supplier    *string
+	ReceivedBy  *string
 	Notes       *string
 	Lines       []ReceiptLineInput
 	CreatedBy   *uuid.UUID
+}
+
+// receiptReadCols selects a receipt plus its computed monetary value (Σ of the
+// priced lines) — value is not a stored column.
+const receiptReadCols = `id, receipt_type, status, source_ref, grn_id, po_id, supplier, received_by, notes,
+	COALESCE((SELECT SUM(rl.qty * rl.unit_cost) FROM wh_receipt_lines rl WHERE rl.receipt_id = wh_receipts.id), 0) AS value,
+	posted_at, created_by, created_at, updated_at`
+
+func scanReceiptRow(row pgx.Row) (models.Receipt, error) {
+	var r models.Receipt
+	err := row.Scan(&r.ID, &r.ReceiptType, &r.Status, &r.SourceRef, &r.GRNID, &r.POID,
+		&r.Supplier, &r.ReceivedBy, &r.Notes, &r.Value, &r.PostedAt, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt)
+	return r, err
 }
 
 func (s *Store) CreateReceipt(ctx context.Context, in CreateReceiptInput) (models.Receipt, error) {
@@ -40,11 +55,11 @@ func (s *Store) CreateReceipt(ctx context.Context, in CreateReceiptInput) (model
 
 	var receipt models.Receipt
 	err = tx.QueryRow(ctx, `
-		INSERT INTO wh_receipts (receipt_type, source_ref, grn_id, po_id, notes, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, receipt_type, status, source_ref, grn_id, po_id, notes, posted_at, created_by, created_at, updated_at`,
-		in.ReceiptType, in.SourceRef, in.GRNID, in.POID, in.Notes, in.CreatedBy,
-	).Scan(&receipt.ID, &receipt.ReceiptType, &receipt.Status, &receipt.SourceRef, &receipt.GRNID, &receipt.POID, &receipt.Notes, &receipt.PostedAt, &receipt.CreatedBy, &receipt.CreatedAt, &receipt.UpdatedAt)
+		INSERT INTO wh_receipts (receipt_type, source_ref, grn_id, po_id, supplier, received_by, notes, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, receipt_type, status, source_ref, grn_id, po_id, supplier, received_by, notes, posted_at, created_by, created_at, updated_at`,
+		in.ReceiptType, in.SourceRef, in.GRNID, in.POID, in.Supplier, in.ReceivedBy, in.Notes, in.CreatedBy,
+	).Scan(&receipt.ID, &receipt.ReceiptType, &receipt.Status, &receipt.SourceRef, &receipt.GRNID, &receipt.POID, &receipt.Supplier, &receipt.ReceivedBy, &receipt.Notes, &receipt.PostedAt, &receipt.CreatedBy, &receipt.CreatedAt, &receipt.UpdatedAt)
 	if err != nil {
 		return receipt, err
 	}
@@ -83,11 +98,11 @@ func (s *Store) ListReceipts(ctx context.Context, status string, limit int) ([]m
 	var err error
 	if status != "" {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, receipt_type, status, source_ref, grn_id, po_id, notes, posted_at, created_by, created_at, updated_at
+			SELECT `+receiptReadCols+`
 			FROM wh_receipts WHERE status = $1 ORDER BY created_at DESC LIMIT $2`, status, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, receipt_type, status, source_ref, grn_id, po_id, notes, posted_at, created_by, created_at, updated_at
+			SELECT `+receiptReadCols+`
 			FROM wh_receipts ORDER BY created_at DESC LIMIT $1`, limit)
 	}
 	if err != nil {
@@ -98,11 +113,9 @@ func (s *Store) ListReceipts(ctx context.Context, status string, limit int) ([]m
 }
 
 func (s *Store) GetReceipt(ctx context.Context, id uuid.UUID) (models.Receipt, error) {
-	var r models.Receipt
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, receipt_type, status, source_ref, grn_id, po_id, notes, posted_at, created_by, created_at, updated_at
-		FROM wh_receipts WHERE id = $1`, id,
-	).Scan(&r.ID, &r.ReceiptType, &r.Status, &r.SourceRef, &r.GRNID, &r.POID, &r.Notes, &r.PostedAt, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt)
+	r, err := scanReceiptRow(s.pool.QueryRow(ctx, `
+		SELECT `+receiptReadCols+`
+		FROM wh_receipts WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -258,10 +271,10 @@ func (s *Store) LinkExternalRef(ctx context.Context, sourceService, sourceType, 
 }
 
 func scanReceipts(rows pgx.Rows) ([]models.Receipt, error) {
-	var out []models.Receipt
+	out := []models.Receipt{}
 	for rows.Next() {
-		var r models.Receipt
-		if err := rows.Scan(&r.ID, &r.ReceiptType, &r.Status, &r.SourceRef, &r.GRNID, &r.POID, &r.Notes, &r.PostedAt, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		r, err := scanReceiptRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)

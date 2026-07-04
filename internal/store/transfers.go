@@ -190,3 +190,56 @@ func (s *Store) getTransfer(ctx context.Context, id uuid.UUID) (models.Transfer,
 	}
 	return tr, err
 }
+
+func (s *Store) ListTransfers(ctx context.Context, status string, limit int) ([]models.Transfer, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var rows pgx.Rows
+	var err error
+	if status != "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at
+			FROM wh_transfers WHERE status = $1 ORDER BY created_at DESC LIMIT $2`, status, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at
+			FROM wh_transfers ORDER BY created_at DESC LIMIT $1`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Transfer{}
+	for rows.Next() {
+		var tr models.Transfer
+		if err := rows.Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, tr)
+	}
+	return out, rows.Err()
+}
+
+// GetTransfer returns a transfer with its lines (bin codes joined for display).
+func (s *Store) GetTransfer(ctx context.Context, id uuid.UUID) (models.Transfer, error) {
+	tr, err := s.getTransfer(ctx, id)
+	if err != nil {
+		return tr, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, transfer_id, item_id, qty, from_bin_id, to_bin_id, lot_key, serial_key
+		FROM wh_transfer_lines WHERE transfer_id = $1`, id)
+	if err != nil {
+		return tr, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var l models.TransferLine
+		if err := rows.Scan(&l.ID, &l.TransferID, &l.ItemID, &l.Qty, &l.FromBinID, &l.ToBinID, &l.LotKey, &l.SerialKey); err != nil {
+			return tr, err
+		}
+		tr.Lines = append(tr.Lines, l)
+	}
+	return tr, rows.Err()
+}

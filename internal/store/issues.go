@@ -26,10 +26,23 @@ type CreateIssueInput struct {
 	CostCenter         *string
 	ProductionOrderRef *string
 	WorkOrderRef       *string
+	RequestedBy        *string
+	Priority           *string
 	BatchBusinessID    *string
 	Notes              *string
 	Lines              []IssueLineInput
 	CreatedBy          *uuid.UUID
+}
+
+const issueReadCols = `id, status, department, cost_center, production_order_ref, work_order_ref,
+	requested_by, priority, batch_business_id, notes, posted_at, created_by, created_at, updated_at`
+
+func scanIssueRow(row pgx.Row) (models.Issue, error) {
+	var iss models.Issue
+	err := row.Scan(&iss.ID, &iss.Status, &iss.Department, &iss.CostCenter, &iss.ProductionOrderRef,
+		&iss.WorkOrderRef, &iss.RequestedBy, &iss.Priority, &iss.BatchBusinessID, &iss.Notes,
+		&iss.PostedAt, &iss.CreatedBy, &iss.CreatedAt, &iss.UpdatedAt)
+	return iss, err
 }
 
 func (s *Store) CreateIssue(ctx context.Context, in CreateIssueInput) (models.Issue, error) {
@@ -39,13 +52,12 @@ func (s *Store) CreateIssue(ctx context.Context, in CreateIssueInput) (models.Is
 	}
 	defer tx.Rollback(ctx)
 
-	var issue models.Issue
-	err = tx.QueryRow(ctx, `
-		INSERT INTO wh_issues (department, cost_center, production_order_ref, work_order_ref, batch_business_id, notes, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, status, department, cost_center, production_order_ref, work_order_ref, batch_business_id, notes, posted_at, created_by, created_at, updated_at`,
-		in.Department, in.CostCenter, in.ProductionOrderRef, in.WorkOrderRef, in.BatchBusinessID, in.Notes, in.CreatedBy,
-	).Scan(&issue.ID, &issue.Status, &issue.Department, &issue.CostCenter, &issue.ProductionOrderRef, &issue.WorkOrderRef, &issue.BatchBusinessID, &issue.Notes, &issue.PostedAt, &issue.CreatedBy, &issue.CreatedAt, &issue.UpdatedAt)
+	issue, err := scanIssueRow(tx.QueryRow(ctx, `
+		INSERT INTO wh_issues (department, cost_center, production_order_ref, work_order_ref, requested_by, priority, batch_business_id, notes, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING `+issueReadCols,
+		in.Department, in.CostCenter, in.ProductionOrderRef, in.WorkOrderRef, in.RequestedBy, in.Priority, in.BatchBusinessID, in.Notes, in.CreatedBy,
+	))
 	if err != nil {
 		return issue, err
 	}
@@ -96,21 +108,21 @@ func (s *Store) ListIssues(ctx context.Context, status string, limit int) ([]mod
 	var err error
 	if status != "" {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, status, department, cost_center, production_order_ref, work_order_ref, batch_business_id, notes, posted_at, created_by, created_at, updated_at
+			SELECT `+issueReadCols+`
 			FROM wh_issues WHERE status = $1 ORDER BY created_at DESC LIMIT $2`, status, limit)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, status, department, cost_center, production_order_ref, work_order_ref, batch_business_id, notes, posted_at, created_by, created_at, updated_at
+			SELECT `+issueReadCols+`
 			FROM wh_issues ORDER BY created_at DESC LIMIT $1`, limit)
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []models.Issue
+	out := []models.Issue{}
 	for rows.Next() {
-		var iss models.Issue
-		if err := rows.Scan(&iss.ID, &iss.Status, &iss.Department, &iss.CostCenter, &iss.ProductionOrderRef, &iss.WorkOrderRef, &iss.BatchBusinessID, &iss.Notes, &iss.PostedAt, &iss.CreatedBy, &iss.CreatedAt, &iss.UpdatedAt); err != nil {
+		iss, err := scanIssueRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, iss)
@@ -119,11 +131,9 @@ func (s *Store) ListIssues(ctx context.Context, status string, limit int) ([]mod
 }
 
 func (s *Store) GetIssue(ctx context.Context, id uuid.UUID) (models.Issue, error) {
-	var iss models.Issue
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, status, department, cost_center, production_order_ref, work_order_ref, batch_business_id, notes, posted_at, created_by, created_at, updated_at
-		FROM wh_issues WHERE id = $1`, id,
-	).Scan(&iss.ID, &iss.Status, &iss.Department, &iss.CostCenter, &iss.ProductionOrderRef, &iss.WorkOrderRef, &iss.BatchBusinessID, &iss.Notes, &iss.PostedAt, &iss.CreatedBy, &iss.CreatedAt, &iss.UpdatedAt)
+	iss, err := scanIssueRow(s.pool.QueryRow(ctx, `
+		SELECT `+issueReadCols+`
+		FROM wh_issues WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return iss, ErrNotFound
 	}

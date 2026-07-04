@@ -312,6 +312,40 @@ func (s *Store) CreatePackSession(ctx context.Context, pickListID *uuid.UUID, cr
 	return id, err
 }
 
+func (s *Store) ListPackSessions(ctx context.Context, limit int) ([]models.PackSession, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, pick_list_id, status, attrs, created_by, created_at
+		FROM wh_pack_sessions ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.PackSession{}
+	for rows.Next() {
+		var p models.PackSession
+		if err := rows.Scan(&p.ID, &p.PickListID, &p.Status, &p.Attrs, &p.CreatedBy, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetPackSession(ctx context.Context, id uuid.UUID) (models.PackSession, error) {
+	var p models.PackSession
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, pick_list_id, status, attrs, created_by, created_at
+		FROM wh_pack_sessions WHERE id = $1`, id,
+	).Scan(&p.ID, &p.PickListID, &p.Status, &p.Attrs, &p.CreatedBy, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
 func (s *Store) HandleDispatchCreated(ctx context.Context, dispatchID, orderRef string) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id FROM wh_pick_lists WHERE order_ref = $1 AND status = 'open' LIMIT 1`, orderRef)

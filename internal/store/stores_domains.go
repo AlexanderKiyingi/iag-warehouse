@@ -13,6 +13,15 @@ import (
 // CRUD for the flat stores-domain record tables (migration 010). These carry no
 // stock side-effects — they are workspace record keeping for the storesiag
 // alerts, returns, gate-pass, warranty, and event views.
+//
+// Update semantics: every text column uses COALESCE(NULLIF($n, ''), col) so a
+// PATCH that omits a field (or sends it empty) PRESERVES the stored value rather
+// than blanking it. This is a partial-update contract — clients only need to send
+// the fields they are changing. It notably protects columns set by side-channel
+// actions (e.g. a gate pass's return_date stamped by ReturnGatePass) from being
+// wiped when the record is later edited from a form that never carried that field.
+// Trade-off: a text field cannot be cleared back to empty via update (acceptable
+// for these record tables). Numeric columns are set directly.
 
 // --- stock thresholds (alerts) ---------------------------------------------
 
@@ -50,7 +59,8 @@ func (s *Store) CreateThreshold(ctx context.Context, t models.StockThreshold) (m
 
 func (s *Store) UpdateThreshold(ctx context.Context, id uuid.UUID, t models.StockThreshold) (models.StockThreshold, error) {
 	out, err := scanThreshold(s.pool.QueryRow(ctx, `
-		UPDATE wh_stock_thresholds SET item=$2, dept=$3, current_qty=$4, min_qty=$5, reorder_qty=$6,
+		UPDATE wh_stock_thresholds SET item=COALESCE(NULLIF($2, ''), item), dept=COALESCE(NULLIF($3, ''), dept),
+			current_qty=$4, min_qty=$5, reorder_qty=$6,
 			alert_method=COALESCE(NULLIF($7, ''), alert_method), status=COALESCE(NULLIF($8, ''), status), updated_at=NOW()
 		WHERE id=$1 RETURNING `+thresholdCols, id, t.Item, t.Dept, t.CurrentQty, t.MinQty, t.ReorderQty, t.AlertMethod, t.Status))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -99,8 +109,11 @@ func (s *Store) CreateReturn(ctx context.Context, r models.StockReturn) (models.
 
 func (s *Store) UpdateReturn(ctx context.Context, id uuid.UUID, r models.StockReturn) (models.StockReturn, error) {
 	out, err := scanReturn(s.pool.QueryRow(ctx, `
-		UPDATE wh_returns SET item=$2, sku=$3, qty=$4, returned_by=$5, condition=$6, linked_ref=$7, action=$8,
-			status=COALESCE(NULLIF($9, ''), status), notes=$10, return_date=$11, updated_at=NOW()
+		UPDATE wh_returns SET item=COALESCE(NULLIF($2, ''), item), sku=COALESCE(NULLIF($3, ''), sku), qty=$4,
+			returned_by=COALESCE(NULLIF($5, ''), returned_by), condition=COALESCE(NULLIF($6, ''), condition),
+			linked_ref=COALESCE(NULLIF($7, ''), linked_ref), action=COALESCE(NULLIF($8, ''), action),
+			status=COALESCE(NULLIF($9, ''), status), notes=COALESCE(NULLIF($10, ''), notes),
+			return_date=COALESCE(NULLIF($11, ''), return_date), updated_at=NOW()
 		WHERE id=$1 RETURNING `+returnCols, id, r.Item, r.SKU, r.Qty, r.ReturnedBy, r.Condition, r.LinkedRef, r.Action, r.Status, r.Notes, r.ReturnDate))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.StockReturn{}, ErrNotFound
@@ -148,8 +161,11 @@ func (s *Store) CreateGatePass(ctx context.Context, g models.GatePass) (models.G
 
 func (s *Store) UpdateGatePass(ctx context.Context, id uuid.UUID, g models.GatePass) (models.GatePass, error) {
 	out, err := scanGatePass(s.pool.QueryRow(ctx, `
-		UPDATE wh_gate_passes SET gate_pass_no=$2, items=$3, issued_to=$4, dept=$5, purpose=$6, date_out=$7,
-			return_by=$8, return_date=$9, status=COALESCE(NULLIF($10, ''), status), authorized_by=$11, updated_at=NOW()
+		UPDATE wh_gate_passes SET gate_pass_no=COALESCE(NULLIF($2, ''), gate_pass_no), items=COALESCE(NULLIF($3, ''), items),
+			issued_to=COALESCE(NULLIF($4, ''), issued_to), dept=COALESCE(NULLIF($5, ''), dept), purpose=COALESCE(NULLIF($6, ''), purpose),
+			date_out=COALESCE(NULLIF($7, ''), date_out), return_by=COALESCE(NULLIF($8, ''), return_by),
+			return_date=COALESCE(NULLIF($9, ''), return_date), status=COALESCE(NULLIF($10, ''), status),
+			authorized_by=COALESCE(NULLIF($11, ''), authorized_by), updated_at=NOW()
 		WHERE id=$1 RETURNING `+gatePassCols, id, g.GatePassNo, g.Items, g.IssuedTo, g.Dept, g.Purpose, g.DateOut, g.ReturnBy, g.ReturnDate, g.Status, g.AuthorizedBy))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.GatePass{}, ErrNotFound
@@ -208,8 +224,11 @@ func (s *Store) CreateWarranty(ctx context.Context, w models.Warranty) (models.W
 
 func (s *Store) UpdateWarranty(ctx context.Context, id uuid.UUID, w models.Warranty) (models.Warranty, error) {
 	out, err := scanWarranty(s.pool.QueryRow(ctx, `
-		UPDATE wh_warranties SET item=$2, supplier=$3, asset_ref=$4, purchase_date=$5, expiry_date=$6, duration=$7,
-			covers=$8, contact=$9, status=COALESCE(NULLIF($10, ''), status), updated_at=NOW()
+		UPDATE wh_warranties SET item=COALESCE(NULLIF($2, ''), item), supplier=COALESCE(NULLIF($3, ''), supplier),
+			asset_ref=COALESCE(NULLIF($4, ''), asset_ref), purchase_date=COALESCE(NULLIF($5, ''), purchase_date),
+			expiry_date=COALESCE(NULLIF($6, ''), expiry_date), duration=COALESCE(NULLIF($7, ''), duration),
+			covers=COALESCE(NULLIF($8, ''), covers), contact=COALESCE(NULLIF($9, ''), contact),
+			status=COALESCE(NULLIF($10, ''), status), updated_at=NOW()
 		WHERE id=$1 RETURNING `+warrantyCols, id, w.Item, w.Supplier, w.AssetRef, w.PurchaseDate, w.ExpiryDate, w.Duration, w.Covers, w.Contact, w.Status))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Warranty{}, ErrNotFound
@@ -257,8 +276,10 @@ func (s *Store) CreateEventRequest(ctx context.Context, e models.EventRequest) (
 
 func (s *Store) UpdateEventRequest(ctx context.Context, id uuid.UUID, e models.EventRequest) (models.EventRequest, error) {
 	out, err := scanEvent(s.pool.QueryRow(ctx, `
-		UPDATE wh_event_requests SET event_name=$2, items=$3, qty=$4, dept=$5, requested_by=$6, needed_by=$7,
-			return_date=$8, status=COALESCE(NULLIF($9, ''), status), notes=$10, updated_at=NOW()
+		UPDATE wh_event_requests SET event_name=COALESCE(NULLIF($2, ''), event_name), items=COALESCE(NULLIF($3, ''), items),
+			qty=$4, dept=COALESCE(NULLIF($5, ''), dept), requested_by=COALESCE(NULLIF($6, ''), requested_by),
+			needed_by=COALESCE(NULLIF($7, ''), needed_by), return_date=COALESCE(NULLIF($8, ''), return_date),
+			status=COALESCE(NULLIF($9, ''), status), notes=COALESCE(NULLIF($10, ''), notes), updated_at=NOW()
 		WHERE id=$1 RETURNING `+eventCols, id, e.EventName, e.Items, e.Qty, e.Dept, e.RequestedBy, e.NeededBy, e.ReturnDate, e.Status, e.Notes))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.EventRequest{}, ErrNotFound
@@ -306,8 +327,11 @@ func (s *Store) CreateSmallTool(ctx context.Context, t models.SmallTool) (models
 
 func (s *Store) UpdateSmallTool(ctx context.Context, id uuid.UUID, t models.SmallTool) (models.SmallTool, error) {
 	out, err := scanSmallTool(s.pool.QueryRow(ctx, `
-		UPDATE wh_small_tools SET tag_no=$2, name=$3, category=$4, custodian=$5, dept=$6, issued=$7, return_by=$8,
-			condition=COALESCE(NULLIF($9, ''), condition), status=COALESCE(NULLIF($10, ''), status), notes=$11, updated_at=NOW()
+		UPDATE wh_small_tools SET tag_no=COALESCE(NULLIF($2, ''), tag_no), name=COALESCE(NULLIF($3, ''), name),
+			category=COALESCE(NULLIF($4, ''), category), custodian=COALESCE(NULLIF($5, ''), custodian), dept=COALESCE(NULLIF($6, ''), dept),
+			issued=COALESCE(NULLIF($7, ''), issued), return_by=COALESCE(NULLIF($8, ''), return_by),
+			condition=COALESCE(NULLIF($9, ''), condition), status=COALESCE(NULLIF($10, ''), status),
+			notes=COALESCE(NULLIF($11, ''), notes), updated_at=NOW()
 		WHERE id=$1 RETURNING `+smallToolCols, id, t.TagNo, t.Name, t.Category, t.Custodian, t.Dept, t.Issued, t.ReturnBy, t.Condition, t.Status, t.Notes))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.SmallTool{}, ErrNotFound
