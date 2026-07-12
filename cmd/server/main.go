@@ -82,12 +82,12 @@ func main() {
 			Issuer:   cfg.JWTIssuer,
 			Audience: cfg.Audience,
 		})
-		initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := verifier.Refresh(initCtx); err != nil {
-			cancel()
-			log.Fatalf("jwks refresh: %v", err)
+		// Never crash-loop the whole service on a transient JWKS hiccup at boot:
+		// retry briefly, then degrade to the background refresh loop below. Until
+		// keys load, tokens fail closed (401) — far better than a 503 outage.
+		if err := refreshJWKSWithRetry(ctx, verifier); err != nil {
+			log.Printf("warning: initial jwks refresh failed after retries; continuing with background refresh: %v", err)
 		}
-		cancel()
 		go jwksRefreshLoop(verifier)
 	}
 
@@ -151,6 +151,27 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// refreshJWKSWithRetry does a bounded set of boot-time refresh attempts with a
+// short linear backoff. On persistent failure it returns the last error so the
+// caller can degrade to the background refresh loop instead of exiting.
+func refreshJWKSWithRetry(ctx context.Context, v *authclient.Verifier) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		c, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = v.Refresh(c)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt+1) * 2 * time.Second):
+		}
+	}
+	return err
 }
 
 func jwksRefreshLoop(v *authclient.Verifier) {
