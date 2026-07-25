@@ -263,9 +263,9 @@ func (s *Store) ListLowStock(ctx context.Context) ([]LowStockItem, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost) {
+func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost) error {
 	if s.invBridge == nil {
-		return
+		return nil
 	}
 	payload := inventory.MovementPayload{
 		MovementID:   movementID.String(),
@@ -292,7 +292,7 @@ func (s *Store) emitInventoryMovement(ctx context.Context, movementID uuid.UUID,
 	if batchID != nil {
 		payload.BatchBusinessID = *batchID
 	}
-	s.invBridge.EmitMovementPosted(ctx, payload)
+	return s.invBridge.EmitMovementPosted(ctx, tx, payload)
 }
 
 // pickAvailableBinCode chooses a concrete bin to issue an item from when the

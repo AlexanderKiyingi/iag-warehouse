@@ -154,7 +154,9 @@ func (s *Store) postTransfer(ctx context.Context, transferID uuid.UUID, actorID 
 			return models.Transfer{}, err
 		}
 		// A transfer relocates stock between bins — cost-neutral, no valuation.
-		s.emitInventoryMovement(ctx, movID, models.MovementTransfer, l.itemID, l.sku, &l.fromBin, &l.toBin, l.qty, lotKey, serialKey, nil, movementCost{})
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementTransfer, l.itemID, l.sku, &l.fromBin, &l.toBin, l.qty, lotKey, serialKey, nil, movementCost{}); err != nil {
+			return models.Transfer{}, err
+		}
 	}
 
 	_, err = tx.Exec(ctx, `UPDATE wh_transfers SET status = 'posted', posted_at = NOW(), updated_at = NOW() WHERE id = $1`, transferID)

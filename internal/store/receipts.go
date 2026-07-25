@@ -223,7 +223,9 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 		if err != nil {
 			return models.Receipt{}, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID, cost)
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID, cost); err != nil {
+			return models.Receipt{}, err
+		}
 		eventLines = append(eventLines, map[string]any{
 			"item_id": l.itemID.String(),
 			"sku":     l.sku,

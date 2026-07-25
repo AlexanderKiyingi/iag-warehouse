@@ -101,7 +101,9 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 		if err != nil {
 			return adj, err
 		}
-		s.emitInventoryMovement(ctx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost)
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost); err != nil {
+			return adj, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

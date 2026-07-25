@@ -3,6 +3,8 @@ package inventory
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5"
+
 	"iag-warehouse/backend/internal/events"
 )
 
@@ -45,10 +47,13 @@ type MovementPayload struct {
 	AvgCostAfter float64 `json:"avg_cost_after,omitempty"` // moving-average cost after the move
 }
 
-// EmitMovementPosted publishes warehouse.movement.posted when inventory service is live.
-func (b *Bridge) EmitMovementPosted(ctx context.Context, payload MovementPayload) {
+// EmitMovementPosted enqueues warehouse.movement.posted into the outbox inside
+// tx, so the valued inventory movement commits atomically with the stock write
+// (or not at all). This matters once costing is enabled: a phantom or lost
+// movement would misstate finance's GL. A disabled/absent bus is a no-op.
+func (b *Bridge) EmitMovementPosted(ctx context.Context, tx pgx.Tx, payload MovementPayload) error {
 	if b == nil || b.bus == nil || !b.bus.Enabled() {
-		return
+		return nil
 	}
 	data := map[string]any{
 		"movement_id":   payload.MovementID,
@@ -84,5 +89,5 @@ func (b *Bridge) EmitMovementPosted(ctx context.Context, payload MovementPayload
 			data["currency"] = payload.Currency
 		}
 	}
-	b.bus.Publish(ctx, events.TypeMovementPosted, data, payload.MovementID)
+	return b.bus.PublishTx(ctx, tx, events.TypeMovementPosted, data, payload.MovementID)
 }
