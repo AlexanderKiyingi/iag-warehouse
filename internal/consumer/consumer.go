@@ -3,11 +3,13 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"strings"
 
+	platformevents "github.com/alvor-technologies/iag-platform-go/events"
 	"github.com/google/uuid"
-	"github.com/segmentio/kafka-go"
+	"golang.org/x/sync/errgroup"
 
 	"iag-warehouse/backend/internal/store"
 )
@@ -20,7 +22,17 @@ type Config struct {
 	QualityTopic     string
 	OperationsTopic  string
 	SupplyChainTopic string
+	// DLQTopic receives messages the handler cannot process. Empty disables it,
+	// and poison messages are logged and skipped instead.
+	DLQTopic string
 }
+
+// An event that cannot be identified or routed is a producer contract problem,
+// not a transient failure — it is dead-lettered rather than retried.
+var (
+	errMissingEventID   = errors.New("event has no id; cannot be deduplicated safely")
+	errMissingEventType = errors.New("event has no type; cannot be routed")
+)
 
 type Consumer struct {
 	cfg   Config
@@ -31,6 +43,19 @@ func New(cfg Config, st *store.Store) *Consumer {
 	return &Consumer{cfg: cfg, store: st}
 }
 
+// Run consumes every configured topic through the shared platform consumer.
+//
+// This service used to drive its own Kafka loop. That loop marked an event
+// handled before handling it, so a failed dispatch was never retried and the
+// redelivery skipped the work — a goods receipt lost to a transient error. It
+// also had no retries and no dead-letter path, which left a permanently failing
+// message blocking its offset forever.
+//
+// The shared consumer already answers all three: it dedupes on the way in,
+// retries transient failures with backoff, marks the event only after the
+// handler succeeds, and routes poison messages to a DLQ. One consumer is run
+// per topic because it takes a single topic; they share the dedupe table and
+// the handler.
 func (c *Consumer) Run(ctx context.Context) error {
 	if len(c.cfg.Brokers) == 0 {
 		log.Printf("warehouse consumer: KAFKA_BROKERS unset — skipping")
@@ -41,91 +66,57 @@ func (c *Consumer) Run(ctx context.Context) error {
 		return nil
 	}
 
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     c.cfg.Brokers,
-		GroupID:     c.cfg.GroupID,
-		GroupTopics: topics,
-		MinBytes:    1,
-		MaxBytes:    10e6,
-	})
-	defer r.Close()
+	var dlq *platformevents.Producer
+	if c.cfg.DLQTopic != "" {
+		dlq = platformevents.NewProducer(platformevents.ProducerConfig{
+			Brokers:  c.cfg.Brokers,
+			ClientID: "iag-warehouse-dlq",
+		})
+		defer dlq.Close()
+	} else {
+		// Without a DLQ the shared consumer logs a poison message and moves on,
+		// which is still better than the old loop wedging on it — but it is a
+		// silent drop, so say so at boot rather than at three in the morning.
+		log.Printf("warehouse consumer: KAFKA_DLQ_TOPIC unset — poison messages will be logged and skipped")
+	}
+
+	dedupe := platformevents.PostgresDedupe(c.store.Pool(), "kafka_dedupe")
 
 	log.Printf("warehouse consumer: listening on %v (group=%s)", topics, c.cfg.GroupID)
-	for {
-		msg, err := r.FetchMessage(ctx)
+	grp, gctx := errgroup.WithContext(ctx)
+	for _, topic := range topics {
+		inner, err := platformevents.NewConsumer(platformevents.ConsumerConfig{
+			Brokers:     c.cfg.Brokers,
+			Topic:       topic,
+			GroupID:     c.cfg.GroupID,
+			Handler:     platformevents.HandlerFunc(c.handle),
+			Dedupe:      dedupe,
+			DLQProducer: dlq,
+			DLQTopic:    c.cfg.DLQTopic,
+		})
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			log.Printf("warehouse consumer fetch: %v", err)
-			continue
+			return err
 		}
-		if err := c.handleMessage(ctx, msg); err != nil {
-			log.Printf("warehouse consumer handle topic=%s: %v", msg.Topic, err)
-			continue
-		}
-		if err := r.CommitMessages(ctx, msg); err != nil {
-			log.Printf("warehouse consumer commit: %v", err)
-		}
+		grp.Go(func() error { return inner.Run(gctx) })
 	}
+	return grp.Wait()
 }
 
-type cloudEvent struct {
-	ID   string         `json:"id"`
-	Type string         `json:"type"`
-	Data map[string]any `json:"data"`
-}
-
-func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
-	var env cloudEvent
-	if err := json.Unmarshal(msg.Value, &env); err != nil {
-		return err
+// handle routes one event to its handler.
+//
+// An event with no id is refused rather than processed. Dedupe is keyed on that
+// id and none of these handlers is idempotent on its own, so an unidentifiable
+// event cannot be replayed safely — every redelivery would add the stock again.
+// Sending it to the DLQ makes it a question for a person instead of a silent
+// duplicate.
+func (c *Consumer) handle(ctx context.Context, env platformevents.Envelope) error {
+	if strings.TrimSpace(env.ID) == "" {
+		return platformevents.Permanent(errMissingEventID)
 	}
-	eventID := env.ID
-	if eventID == "" {
-		eventID = string(msg.Key)
+	if env.Type == "" {
+		return platformevents.Permanent(errMissingEventType)
 	}
-	// Claim the event. The claim is only a lease: it stops a duplicate delivery
-	// running the same work concurrently, but it does not mean the work is done.
-	// Only completed_at means that, and it is set after the handler succeeds.
-	//
-	// Taking over an incomplete claim is deliberate. A handler that failed left
-	// its claim behind while Kafka kept the message uncommitted for redelivery;
-	// treating that claim as final is what silently discarded the event.
-	tag, err := c.store.Pool().Exec(ctx, `
-		INSERT INTO kafka_dedupe (event_id, topic) VALUES ($1, $2)
-		ON CONFLICT (event_id) DO UPDATE
-		SET topic = EXCLUDED.topic, seen_at = NOW()
-		WHERE kafka_dedupe.completed_at IS NULL`, eventID, msg.Topic)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		// The row exists and is complete: this event has already been applied.
-		return nil
-	}
-
-	eventType := env.Type
-	if eventType == "" {
-		eventType = string(msg.Key)
-	}
-	if err := c.dispatch(ctx, eventType, env.Data); err != nil {
-		// Release the claim so the redelivery re-runs the work. Best effort: if
-		// this fails the row stays incomplete, which is still re-claimable.
-		if _, delErr := c.store.Pool().Exec(ctx,
-			`DELETE FROM kafka_dedupe WHERE event_id = $1 AND completed_at IS NULL`, eventID); delErr != nil {
-			log.Printf("warehouse consumer release claim event=%s: %v", eventID, delErr)
-		}
-		return err
-	}
-	if _, err := c.store.Pool().Exec(ctx,
-		`UPDATE kafka_dedupe SET completed_at = NOW() WHERE event_id = $1`, eventID); err != nil {
-		// The work is done but unrecorded. Failing here re-delivers and re-runs
-		// it, which is the safer direction: these handlers add stock, and the
-		// alternative is losing it.
-		return err
-	}
-	return nil
+	return c.dispatch(ctx, env.Type, env.Data)
 }
 
 func (c *Consumer) dispatch(ctx context.Context, eventType string, data map[string]any) error {

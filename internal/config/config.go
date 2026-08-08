@@ -29,15 +29,16 @@ type Config struct {
 	GatewayAPIPrefix    string
 	PublicAPIURL        string
 
-	KafkaBrokers           []string
-	KafkaClientID          string
-	KafkaConsumerGroup     string
-	KafkaOperationsTopic   string
-	KafkaCommercialTopic   string
-	KafkaProductionTopic   string
-	KafkaQualityTopic      string
-	KafkaSupplyChainTopic  string
-	EventBusEnabled        bool
+	KafkaBrokers          []string
+	KafkaClientID         string
+	KafkaConsumerGroup    string
+	KafkaOperationsTopic  string
+	KafkaCommercialTopic  string
+	KafkaProductionTopic  string
+	KafkaQualityTopic     string
+	KafkaSupplyChainTopic string
+	KafkaDLQTopic         string
+	EventBusEnabled       bool
 	// RequireDisposalApproval gates asset disposal behind the tiered approval
 	// workflow: when true a disposal is created pending_approval and only retires
 	// the asset once its amount-band tiers have signed. Default false keeps
@@ -65,33 +66,34 @@ func Load() (*Config, error) {
 	}
 
 	c := &Config{
-		Environment:           env,
-		ServiceName:           getenv("SERVICE_NAME", "warehouse"),
-		Port:                  getenv("PORT", "4005"),
-		LogLevel:              getenv("LOG_LEVEL", "info"),
-		DatabaseURL:           strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		AutoMigrate:           getenv("AUTO_MIGRATE", "true") != "false",
-		AuthMode:              authMode,
-		JWTIssuer:             getenv("JWT_ISSUER", "http://localhost:3001"),
-		JWKSURL:               getenv("JWKS_URL", "http://localhost:3001/.well-known/jwks.json"),
-		Audience:              getenv("AUDIENCE", "iag.warehouse"),
+		Environment:             env,
+		ServiceName:             getenv("SERVICE_NAME", "warehouse"),
+		Port:                    getenv("PORT", "4005"),
+		LogLevel:                getenv("LOG_LEVEL", "info"),
+		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		AutoMigrate:             getenv("AUTO_MIGRATE", "true") != "false",
+		AuthMode:                authMode,
+		JWTIssuer:               getenv("JWT_ISSUER", "http://localhost:3001"),
+		JWKSURL:                 getenv("JWKS_URL", "http://localhost:3001/.well-known/jwks.json"),
+		Audience:                getenv("AUDIENCE", "iag.warehouse"),
 		RequireDisposalApproval: strings.EqualFold(os.Getenv("WAREHOUSE_REQUIRE_DISPOSAL_APPROVAL"), "true"),
-		ServiceClientID:       getenv("SERVICE_CLIENT_ID", "iag-warehouse"),
-		ServiceClientSecret:   os.Getenv("SERVICE_CLIENT_SECRET"),
-		CORSOrigins:           splitCSV(corsenv.Allowlist("http://localhost:3000,http://localhost:8080")),
-		GatewayAPIPrefix:      getenv("GATEWAY_API_PREFIX", "/api/v1/warehouse"),
-		PublicAPIURL:          getenv("PUBLIC_API_URL", "http://localhost:8080"),
-		KafkaBrokers:          splitCSV(getenv("KAFKA_BROKERS", "")),
-		KafkaClientID:         getenv("KAFKA_CLIENT_ID", "iag-warehouse"),
-		KafkaConsumerGroup:    getenv("KAFKA_CONSUMER_GROUP", "iag.warehouse"),
-		KafkaOperationsTopic:  getenv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
-		KafkaCommercialTopic:  getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
-		KafkaProductionTopic:  getenv("KAFKA_PRODUCTION_TOPIC", "iag.production"),
-		KafkaQualityTopic:     getenv("KAFKA_QUALITY_TOPIC", "iag.quality"),
-		KafkaSupplyChainTopic: getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
-		EventBusEnabled:       strings.EqualFold(getenv("EVENT_BUS_ENABLED", "true"), "true"),
+		ServiceClientID:         getenv("SERVICE_CLIENT_ID", "iag-warehouse"),
+		ServiceClientSecret:     os.Getenv("SERVICE_CLIENT_SECRET"),
+		CORSOrigins:             splitCSV(corsenv.Allowlist("http://localhost:3000,http://localhost:8080")),
+		GatewayAPIPrefix:        getenv("GATEWAY_API_PREFIX", "/api/v1/warehouse"),
+		PublicAPIURL:            getenv("PUBLIC_API_URL", "http://localhost:8080"),
+		KafkaBrokers:            splitCSV(getenv("KAFKA_BROKERS", "")),
+		KafkaClientID:           getenv("KAFKA_CLIENT_ID", "iag-warehouse"),
+		KafkaConsumerGroup:      getenv("KAFKA_CONSUMER_GROUP", "iag.warehouse"),
+		KafkaOperationsTopic:    getenv("KAFKA_OPERATIONS_TOPIC", "iag.operations"),
+		KafkaCommercialTopic:    getenv("KAFKA_COMMERCIAL_TOPIC", "iag.commercial"),
+		KafkaProductionTopic:    getenv("KAFKA_PRODUCTION_TOPIC", "iag.production"),
+		KafkaQualityTopic:       getenv("KAFKA_QUALITY_TOPIC", "iag.quality"),
+		KafkaSupplyChainTopic:   getenv("KAFKA_SUPPLY_CHAIN_TOPIC", "iag.supply-chain"),
+		KafkaDLQTopic:           getenv("KAFKA_DLQ_TOPIC", "iag.warehouse.dlq"),
+		EventBusEnabled:         strings.EqualFold(getenv("EVENT_BUS_ENABLED", "true"), "true"),
 		InventoryCostingEnabled: strings.EqualFold(os.Getenv("INVENTORY_COSTING_ENABLED"), "true"),
-		BaseCurrency:          getenv("BASE_CURRENCY", "UGX"),
+		BaseCurrency:            getenv("BASE_CURRENCY", "UGX"),
 	}
 
 	if c.DatabaseURL == "" {

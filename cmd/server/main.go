@@ -111,6 +111,7 @@ func main() {
 			QualityTopic:     cfg.KafkaQualityTopic,
 			OperationsTopic:  cfg.KafkaOperationsTopic,
 			SupplyChainTopic: cfg.KafkaSupplyChainTopic,
+			DLQTopic:         cfg.KafkaDLQTopic,
 		}, st)
 		go func() {
 			if err := kc.Run(ctx); err != nil {
