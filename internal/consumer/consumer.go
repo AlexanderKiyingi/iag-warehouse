@@ -85,13 +85,23 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	if eventID == "" {
 		eventID = string(msg.Key)
 	}
+	// Claim the event. The claim is only a lease: it stops a duplicate delivery
+	// running the same work concurrently, but it does not mean the work is done.
+	// Only completed_at means that, and it is set after the handler succeeds.
+	//
+	// Taking over an incomplete claim is deliberate. A handler that failed left
+	// its claim behind while Kafka kept the message uncommitted for redelivery;
+	// treating that claim as final is what silently discarded the event.
 	tag, err := c.store.Pool().Exec(ctx, `
 		INSERT INTO kafka_dedupe (event_id, topic) VALUES ($1, $2)
-		ON CONFLICT (event_id) DO NOTHING`, eventID, msg.Topic)
+		ON CONFLICT (event_id) DO UPDATE
+		SET topic = EXCLUDED.topic, seen_at = NOW()
+		WHERE kafka_dedupe.completed_at IS NULL`, eventID, msg.Topic)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
+		// The row exists and is complete: this event has already been applied.
 		return nil
 	}
 
@@ -99,7 +109,23 @@ func (c *Consumer) handleMessage(ctx context.Context, msg kafka.Message) error {
 	if eventType == "" {
 		eventType = string(msg.Key)
 	}
-	return c.dispatch(ctx, eventType, env.Data)
+	if err := c.dispatch(ctx, eventType, env.Data); err != nil {
+		// Release the claim so the redelivery re-runs the work. Best effort: if
+		// this fails the row stays incomplete, which is still re-claimable.
+		if _, delErr := c.store.Pool().Exec(ctx,
+			`DELETE FROM kafka_dedupe WHERE event_id = $1 AND completed_at IS NULL`, eventID); delErr != nil {
+			log.Printf("warehouse consumer release claim event=%s: %v", eventID, delErr)
+		}
+		return err
+	}
+	if _, err := c.store.Pool().Exec(ctx,
+		`UPDATE kafka_dedupe SET completed_at = NOW() WHERE event_id = $1`, eventID); err != nil {
+		// The work is done but unrecorded. Failing here re-delivers and re-runs
+		// it, which is the safer direction: these handlers add stock, and the
+		// alternative is losing it.
+		return err
+	}
+	return nil
 }
 
 func (c *Consumer) dispatch(ctx context.Context, eventType string, data map[string]any) error {

@@ -138,6 +138,15 @@ func (s *Store) productionOutputCostTx(ctx context.Context, tx pgx.Tx, batchID *
 	if !s.costingEnabled || batchID == nil || strings.TrimSpace(*batchID) == "" || qty == 0 {
 		return movementCost{}, nil
 	}
+	// Serialize on the batch. The WIP left on a batch is derived by summing its
+	// movements, and there is no production-order row to lock instead, so two
+	// concurrent outputs for the same batch would both read the same remaining
+	// balance and both claim it — crediting WIP twice for cost consumed once.
+	// The lock is held to the end of the transaction that inserts the movement.
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1))`, *batchID); err != nil {
+		return movementCost{}, err
+	}
 	var remaining float64
 	err := tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(ABS(total_cost)) FILTER (WHERE movement_type = 'production_consume'), 0)
