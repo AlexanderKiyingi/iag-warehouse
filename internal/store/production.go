@@ -58,9 +58,14 @@ func (s *Store) ProductionConsume(ctx context.Context, in ProductionConsumeInput
 		if err != nil {
 			return nil, err
 		}
-		// Production consume/output move value through WIP, not COGS — finance
-		// does not yet book these, so they emit no valuation (see roadmap).
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID, movementCost{}); err != nil {
+		// Material leaves stock at average cost, exactly as an issue does; it
+		// parks in WIP rather than going to COGS, because it is still an asset
+		// — just one being worked on.
+		cost, err := s.outboundCostTx(ctx, tx, line.ItemID, line.Qty, movID.String())
+		if err != nil {
+			return nil, err
+		}
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID, cost); err != nil {
 			return nil, err
 		}
 		eventLines = append(eventLines, map[string]any{
@@ -146,7 +151,13 @@ func (s *Store) ProductionOutput(ctx context.Context, in ProductionOutputInput) 
 		return nil, err
 	}
 	sku, _ := s.getItemSKU(ctx, tx, in.ItemID)
-	if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID, movementCost{}); err != nil {
+	// Finished goods are valued at what the batch consumed, which is what
+	// clears that batch's WIP back to zero.
+	outCost, err := s.productionOutputCostTx(ctx, tx, batchID, in.Qty, movID.String())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID, outCost); err != nil {
 		return nil, err
 	}
 

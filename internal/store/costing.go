@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -117,5 +118,43 @@ func (s *Store) adjustmentCostTx(ctx context.Context, tx pgx.Tx, itemID uuid.UUI
 		AvgCostAfter: avg,
 		Ref:          ref,
 		Currency:     s.baseCurrency,
+	}, nil
+}
+
+// productionOutputCostTx values finished goods at what their batch consumed —
+// material-only costing, so a completed batch clears its work in progress to
+// zero and any residue is yield loss.
+//
+// The value is the batch's *remaining* WIP: everything consumed against it,
+// less anything already output. With one output per batch — the normal case —
+// that is exactly the consumed total.
+//
+// Known limitation: a batch with several outputs puts the whole cost on the
+// first, because at that moment there is nothing to say how many more are
+// coming. Warehouse has no production-order entity to close, so there is no
+// later point at which to allocate properly. The WIP-by-batch report is what
+// makes such a batch visible rather than silently mis-valued.
+func (s *Store) productionOutputCostTx(ctx context.Context, tx pgx.Tx, batchID *string, qty float64, ref string) (movementCost, error) {
+	if !s.costingEnabled || batchID == nil || strings.TrimSpace(*batchID) == "" || qty == 0 {
+		return movementCost{}, nil
+	}
+	var remaining float64
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ABS(total_cost)) FILTER (WHERE movement_type = 'production_consume'), 0)
+		     - COALESCE(SUM(ABS(total_cost)) FILTER (WHERE movement_type = 'production_output'), 0)
+		FROM wh_movements
+		WHERE batch_business_id = $1`, *batchID).Scan(&remaining)
+	if err != nil {
+		return movementCost{}, err
+	}
+	if remaining <= 0 {
+		// Nothing consumed yet, or already fully absorbed by an earlier output.
+		return movementCost{}, nil
+	}
+	return movementCost{
+		UnitCost:  remaining / qty,
+		TotalCost: remaining, // goods in → positive
+		Ref:       ref,
+		Currency:  s.baseCurrency,
 	}, nil
 }
