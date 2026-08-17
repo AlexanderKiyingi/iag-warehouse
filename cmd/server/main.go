@@ -149,7 +149,10 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// 30s matches the gateway's own drain window. A shorter one cuts connections
+	// the gateway is still holding on a rolling deploy, and the user sees a 502
+	// from a deploy that reported success.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 }
