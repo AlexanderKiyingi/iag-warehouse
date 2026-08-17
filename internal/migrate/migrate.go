@@ -2,12 +2,14 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-warehouse/backend/migrations"
@@ -87,6 +89,65 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	committed = true
 	return nil
+}
+
+// Status reports which embedded migrations have been applied to this database
+// and which have not, in filename order.
+//
+// It exists so a production run can be inspected before it happens: applying
+// migrations out of band means somebody is typing a command against a live
+// database, and "show me what this would do" is the difference between a
+// deployment step and a gamble. It creates nothing and takes no locks — a
+// database with no migration table yet simply reports everything as pending.
+func Status(ctx context.Context, pool *pgxpool.Pool) (applied, pending []string, err error) {
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read migrations: %w", err)
+	}
+	var versions []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			versions = append(versions, strings.TrimSuffix(e.Name(), ".sql"))
+		}
+	}
+	sort.Strings(versions)
+
+	done := map[string]bool{}
+	rows, err := pool.Query(ctx, `
+		SELECT version FROM warehouse.schema_migrations`)
+	if err != nil {
+		// No migration table yet is a legitimate state — a fresh database has
+		// every migration pending — and must not read as a failure.
+		if isUndefinedTable(err) {
+			return nil, versions, nil
+		}
+		return nil, nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, nil, err
+		}
+		done[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	for _, v := range versions {
+		if done[v] {
+			applied = append(applied, v)
+		} else {
+			pending = append(pending, v)
+		}
+	}
+	return applied, pending, nil
+}
+
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01"
 }
 
 func execSQL(ctx context.Context, tx pgx.Tx, sql string) error {
