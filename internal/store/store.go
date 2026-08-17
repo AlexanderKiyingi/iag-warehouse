@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-warehouse/backend/internal/events"
@@ -18,8 +19,8 @@ var ErrForbidden = errors.New("forbidden")
 var ErrInvalidArgument = errors.New("invalid argument")
 
 type Store struct {
-	pool    *pgxpool.Pool
-	bus     *events.Bus
+	pool      *pgxpool.Pool
+	bus       *events.Bus
 	invBridge *inventory.Bridge
 	// costingEnabled turns on weighted-average costing on valued movement paths
 	// (receipt/issue/adjustment). Off → movements carry no cost and finance no-ops.
@@ -54,5 +55,14 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 func (s *Store) EventBus() *events.Bus { return s.bus }
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint breach
+// (23505). Several write paths rely on a partial unique index as the arbiter of
+// "one of these at a time" — an open replenishment task per pick face, one
+// barcode per string — and need to turn that into a conflict rather than a 500.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 func (s *Store) InventoryBridge() *inventory.Bridge { return s.invBridge }

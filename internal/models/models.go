@@ -125,11 +125,20 @@ type Receipt struct {
 }
 
 type ReceiptLine struct {
-	ID              uuid.UUID      `json:"id"`
-	ReceiptID       uuid.UUID      `json:"receipt_id"`
-	ItemID          uuid.UUID      `json:"item_id"`
-	Qty             float64        `json:"qty"`
-	UOM             string         `json:"uom"`
+	ID        uuid.UUID `json:"id"`
+	ReceiptID uuid.UUID `json:"receipt_id"`
+	ItemID    uuid.UUID `json:"item_id"`
+	// Qty and UOM are in the item's base unit; EnteredQty/EnteredUOM are what the
+	// paperwork said. UnitCost is likewise per base unit, converted from the
+	// purchase price on entry, so valuation never has to know about case sizes.
+	Qty        float64 `json:"qty"`
+	UOM        string  `json:"uom"`
+	EnteredQty float64 `json:"entered_qty"`
+	EnteredUOM string  `json:"entered_uom"`
+	UOMFactor  float64 `json:"uom_factor"`
+	// PutawayRuleID records which rule chose the bin, kept so the decision can be
+	// audited after the rule has been edited or deleted.
+	PutawayRuleID   *uuid.UUID     `json:"putaway_rule_id,omitempty"`
 	BinID           uuid.UUID      `json:"bin_id"`
 	BinCode         string         `json:"bin_code,omitempty"`
 	LotKey          string         `json:"lot_key"`
@@ -156,16 +165,22 @@ type Issue struct {
 }
 
 type IssueLine struct {
-	ID        uuid.UUID      `json:"id"`
-	IssueID   uuid.UUID      `json:"issue_id"`
-	ItemID    uuid.UUID      `json:"item_id"`
-	Qty       float64        `json:"qty"`
-	UOM       string         `json:"uom"`
-	BinID     uuid.UUID      `json:"bin_id"`
-	BinCode   string         `json:"bin_code,omitempty"`
-	LotKey    string         `json:"lot_key"`
-	SerialKey string         `json:"serial_key"`
-	Attrs     map[string]any `json:"attrs,omitempty"`
+	ID      uuid.UUID `json:"id"`
+	IssueID uuid.UUID `json:"issue_id"`
+	ItemID  uuid.UUID `json:"item_id"`
+	// Qty and UOM are always in the item's base unit — every balance, movement
+	// and cost downstream is. EnteredQty/EnteredUOM preserve what was actually
+	// keyed in, and UOMFactor is what converted one into the other.
+	Qty        float64        `json:"qty"`
+	UOM        string         `json:"uom"`
+	EnteredQty float64        `json:"entered_qty"`
+	EnteredUOM string         `json:"entered_uom"`
+	UOMFactor  float64        `json:"uom_factor"`
+	BinID      uuid.UUID      `json:"bin_id"`
+	BinCode    string         `json:"bin_code,omitempty"`
+	LotKey     string         `json:"lot_key"`
+	SerialKey  string         `json:"serial_key"`
+	Attrs      map[string]any `json:"attrs,omitempty"`
 }
 
 type Transfer struct {
@@ -247,7 +262,17 @@ type PickLine struct {
 	BinID      uuid.UUID      `json:"bin_id"`
 	LotKey     string         `json:"lot_key"`
 	PickedQty  float64        `json:"picked_qty"`
-	Attrs      map[string]any `json:"attrs,omitempty"`
+	// PickedSet distinguishes "nobody has been to this line yet" from "the picker
+	// went and found none" — both of which read zero on PickedQty alone.
+	PickedSet   bool       `json:"picked_set"`
+	PickedBy    *uuid.UUID `json:"picked_by,omitempty"`
+	PickedAt    *time.Time `json:"picked_at,omitempty"`
+	ShortReason *string    `json:"short_reason,omitempty"`
+	// Display joins.
+	ItemSKU string `json:"item_sku,omitempty"`
+	BinCode string `json:"bin_code,omitempty"`
+
+	Attrs map[string]any `json:"attrs,omitempty"`
 }
 
 type Adjustment struct {

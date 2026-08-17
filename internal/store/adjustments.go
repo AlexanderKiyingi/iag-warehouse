@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -44,20 +45,35 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 	if err != nil {
 		return models.Adjustment{}, err
 	}
+	adj, err := s.applyStockChangeTx(ctx, tx, in, bin.ID)
+	if err != nil {
+		return adj, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return adj, err
+	}
+	return adj, nil
+}
+
+// applyStockChangeTx is applyStockChange's body against a caller-supplied
+// transaction and an already-resolved bin. Count approval posts many variances
+// that must all land or none of them land, so it needs to drive the adjustment
+// path itself rather than call it once per line and hope.
+func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in AdjustmentInput, binID uuid.UUID) (models.Adjustment, error) {
 	lotKey, serialKey := normalizeKeys(in.LotKey, in.SerialKey)
 
 	var qtyBefore float64
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT COALESCE(qty, 0) FROM wh_stock_balances
 		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
-		in.ItemID, bin.ID, lotKey, serialKey).Scan(&qtyBefore)
-	if err != nil && err != pgx.ErrNoRows {
+		in.ItemID, binID, lotKey, serialKey).Scan(&qtyBefore)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return models.Adjustment{}, err
 	}
 
 	delta := in.QtyAfter - qtyBefore
 	if delta != 0 {
-		if err := s.adjustBalanceTx(ctx, tx, balanceKey{in.ItemID, bin.ID, lotKey, serialKey}, delta, models.StatusAvailable); err != nil {
+		if err := s.adjustBalanceTx(ctx, tx, balanceKey{in.ItemID, binID, lotKey, serialKey}, delta, models.StatusAvailable); err != nil {
 			return models.Adjustment{}, err
 		}
 	}
@@ -67,7 +83,7 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 		INSERT INTO wh_adjustments (adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id, created_at`,
-		in.AdjType, in.ItemID, bin.ID, lotKey, serialKey, qtyBefore, in.QtyAfter, in.Reason, in.ActorID,
+		in.AdjType, in.ItemID, binID, lotKey, serialKey, qtyBefore, in.QtyAfter, in.Reason, in.ActorID,
 	).Scan(&adj.ID, &adj.AdjType, &adj.ItemID, &adj.BinID, &adj.LotKey, &adj.SerialKey, &adj.QtyBefore, &adj.QtyAfter, &adj.Reason, &adj.ActorID, &adj.CreatedAt)
 	if err != nil {
 		return adj, err
@@ -78,8 +94,8 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 	movID, err := s.insertMovementTx(ctx, tx, movementInput{
 		MovementType: models.MovementAdjustment,
 		ItemID:       &in.ItemID,
-		FromBinID:    ptrIf(delta < 0, bin.ID),
-		ToBinID:      ptrIf(delta > 0, bin.ID),
+		FromBinID:    ptrIf(delta < 0, binID),
+		ToBinID:      ptrIf(delta > 0, binID),
 		Qty:          abs(delta),
 		LotKey:       lotKey,
 		SerialKey:    serialKey,
@@ -93,9 +109,9 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 	if delta != 0 {
 		var fromBin, toBin *uuid.UUID
 		if delta < 0 {
-			fromBin = &bin.ID
+			fromBin = &binID
 		} else {
-			toBin = &bin.ID
+			toBin = &binID
 		}
 		cost, err := s.adjustmentCostTx(ctx, tx, in.ItemID, delta, adj.ID.String())
 		if err != nil {
@@ -104,10 +120,6 @@ func (s *Store) applyStockChange(ctx context.Context, in AdjustmentInput) (model
 		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost); err != nil {
 			return adj, err
 		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return adj, err
 	}
 	return adj, nil
 }

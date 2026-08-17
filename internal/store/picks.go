@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -94,7 +96,7 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT pl.item_id, pl.qty, pl.bin_id, pl.lot_key, i.sku
+		SELECT pl.item_id, pl.qty, pl.bin_id, pl.lot_key, i.sku, pl.picked_set, pl.picked_qty
 		FROM wh_pick_lines pl JOIN wh_items i ON i.id = pl.item_id
 		WHERE pl.pick_list_id = $1`, pickListID)
 	if err != nil {
@@ -104,12 +106,14 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 		itemID, binID uuid.UUID
 		qty           float64
 		lotKey, sku   string
+		pickedSet     bool
+		pickedQty     float64
 	}
 	var lines []lineRow
 	var eventLines []map[string]any
 	for rows.Next() {
 		var l lineRow
-		if err := rows.Scan(&l.itemID, &l.qty, &l.binID, &l.lotKey, &l.sku); err != nil {
+		if err := rows.Scan(&l.itemID, &l.qty, &l.binID, &l.lotKey, &l.sku, &l.pickedSet, &l.pickedQty); err != nil {
 			rows.Close()
 			return models.PickList{}, err
 		}
@@ -120,34 +124,54 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 	refTypePick := refType("pick_list")
 	for _, l := range lines {
 		lotKey, _ := normalizeKeys(l.lotKey, "")
-		// Consume the reservation made at pick creation: removes on-hand and
-		// releases the held quantity in one step.
-		if err := s.consumeReservedTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, l.qty); err != nil {
-			return models.PickList{}, err
+		// What actually leaves the bin is what the picker recorded. A line nobody
+		// scanned falls back to its full quantity, which is exactly how confirm
+		// behaved before short picks existed, so lists raised by callers that know
+		// nothing about scanning still confirm the way they always did.
+		picked := l.qty
+		if l.pickedSet {
+			picked = l.pickedQty
 		}
-		movID, err := s.insertMovementTx(ctx, tx, movementInput{
-			MovementType: models.MovementPick,
-			ItemID:       &l.itemID,
-			FromBinID:    &l.binID,
-			Qty:          l.qty,
-			LotKey:       lotKey,
-			RefType:      refTypePick,
-			RefID:        &pickListID,
-			ActorID:      actorID,
-		})
-		if err != nil {
-			return models.PickList{}, err
+		if picked > 0 {
+			// Consume the reservation made at pick creation: removes on-hand and
+			// releases the held quantity in one step.
+			if err := s.consumeReservedTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, picked); err != nil {
+				return models.PickList{}, err
+			}
+			movID, err := s.insertMovementTx(ctx, tx, movementInput{
+				MovementType: models.MovementPick,
+				ItemID:       &l.itemID,
+				FromBinID:    &l.binID,
+				Qty:          picked,
+				LotKey:       lotKey,
+				RefType:      refTypePick,
+				RefID:        &pickListID,
+				ActorID:      actorID,
+			})
+			if err != nil {
+				return models.PickList{}, err
+			}
+			// A pick is an internal allocation, not a costed goods-out event (the
+			// subsequent issue/dispatch carries COGS), so it emits no valuation.
+			if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, picked, lotKey, "", nil, movementCost{}); err != nil {
+				return models.PickList{}, err
+			}
 		}
-		// A pick is an internal allocation, not a costed goods-out event (the
-		// subsequent issue/dispatch carries COGS), so it emits no valuation.
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, "", nil, movementCost{}); err != nil {
-			return models.PickList{}, err
+		// Whatever was reserved but not picked has to go back to free stock here.
+		// A reservation left behind on a closed list is stock that silently stops
+		// existing for everyone else.
+		if short := l.qty - picked; short > 0 {
+			if err := s.releaseReservationTx(ctx, tx, balanceKey{l.itemID, l.binID, lotKey, ""}, short); err != nil {
+				return models.PickList{}, err
+			}
 		}
 		eventLines = append(eventLines, map[string]any{
-			"item_id": l.itemID.String(),
-			"sku":     l.sku,
-			"qty":     l.qty,
-			"lot_key": lotKey,
+			"item_id":     l.itemID.String(),
+			"sku":         l.sku,
+			"qty":         picked,
+			"ordered_qty": l.qty,
+			"short_qty":   l.qty - picked,
+			"lot_key":     lotKey,
 		})
 	}
 
@@ -156,7 +180,7 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 	if err != nil {
 		return models.PickList{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE wh_pick_lines SET picked_qty = qty WHERE pick_list_id = $1`, pickListID)
+	_, err = tx.Exec(ctx, `UPDATE wh_pick_lines SET picked_qty = qty WHERE pick_list_id = $1 AND NOT picked_set`, pickListID)
 	if err != nil {
 		return models.PickList{}, err
 	}
@@ -290,20 +314,81 @@ func (s *Store) getPickList(ctx context.Context, id uuid.UUID) (models.PickList,
 		return pl, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, pick_list_id, item_id, qty, bin_id, lot_key, picked_qty
-		FROM wh_pick_lines WHERE pick_list_id = $1`, id)
+		SELECT pl.id, pl.pick_list_id, pl.item_id, pl.qty, pl.bin_id, pl.lot_key, pl.picked_qty,
+			pl.picked_set, pl.picked_by, pl.picked_at, pl.short_reason, i.sku, b.code
+		FROM wh_pick_lines pl
+		JOIN wh_items i ON i.id = pl.item_id
+		JOIN wh_bins b ON b.id = pl.bin_id
+		WHERE pl.pick_list_id = $1
+		ORDER BY b.code, i.sku`, id)
 	if err != nil {
 		return pl, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var line models.PickLine
-		if err := rows.Scan(&line.ID, &line.PickListID, &line.ItemID, &line.Qty, &line.BinID, &line.LotKey, &line.PickedQty); err != nil {
+		if err := rows.Scan(&line.ID, &line.PickListID, &line.ItemID, &line.Qty, &line.BinID, &line.LotKey,
+			&line.PickedQty, &line.PickedSet, &line.PickedBy, &line.PickedAt, &line.ShortReason,
+			&line.ItemSKU, &line.BinCode); err != nil {
 			return pl, err
 		}
 		pl.Lines = append(pl.Lines, line)
 	}
 	return pl, rows.Err()
+}
+
+// RecordPick captures what a picker actually took off the shelf, which is the
+// step an RF terminal drives one line at a time. It is separate from confirming
+// the list because the two are genuinely different events: picking happens in
+// the aisle over several minutes, confirming happens once at the end.
+//
+// A short pick must say why. "There were only four" and "I could not find the
+// bin" lead to completely different follow-up — the first is a count variance,
+// the second is a slotting problem — and a shortfall with no reason attached is
+// the one that never gets investigated.
+func (s *Store) RecordPick(ctx context.Context, pickListID, lineID uuid.UUID, pickedQty float64, shortReason string, actorID *uuid.UUID) (models.PickList, error) {
+	if pickedQty < 0 {
+		return models.PickList{}, fmt.Errorf("%w: picked_qty cannot be negative", ErrInvalidArgument)
+	}
+
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT status FROM wh_pick_lists WHERE id = $1`, pickListID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.PickList{}, ErrNotFound
+	}
+	if err != nil {
+		return models.PickList{}, err
+	}
+	if status != "open" {
+		return models.PickList{}, ErrConflict
+	}
+
+	var qty float64
+	err = s.pool.QueryRow(ctx,
+		`SELECT qty FROM wh_pick_lines WHERE id = $1 AND pick_list_id = $2`, lineID, pickListID).Scan(&qty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.PickList{}, ErrNotFound
+	}
+	if err != nil {
+		return models.PickList{}, err
+	}
+	if pickedQty > qty {
+		return models.PickList{}, fmt.Errorf("%w: cannot pick more than the %.3f this line reserved", ErrInvalidArgument, qty)
+	}
+	reason := strings.TrimSpace(shortReason)
+	if pickedQty < qty && reason == "" {
+		return models.PickList{}, fmt.Errorf("%w: a short pick needs a reason", ErrInvalidArgument)
+	}
+
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE wh_pick_lines
+		SET picked_qty = $3, picked_set = TRUE, picked_by = $4, picked_at = NOW(),
+			short_reason = NULLIF($5, '')
+		WHERE id = $1 AND pick_list_id = $2`,
+		lineID, pickListID, pickedQty, actorID, reason); err != nil {
+		return models.PickList{}, err
+	}
+	return s.getPickList(ctx, pickListID)
 }
 
 func (s *Store) CreatePackSession(ctx context.Context, pickListID *uuid.UUID, createdBy *uuid.UUID, attrs map[string]any) (uuid.UUID, error) {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,14 +22,18 @@ func (a *API) ListReceipts(c *gin.Context) {
 
 func (a *API) CreateReceipt(c *gin.Context) {
 	var body struct {
-		ReceiptType string            `json:"receipt_type"`
-		SourceRef   string            `json:"source_ref"`
-		GRNID       string            `json:"grn_id"`
-		POID        string            `json:"po_id"`
-		Supplier    string            `json:"supplier"`
-		ReceivedBy  string            `json:"received_by"`
-		Notes       string            `json:"notes"`
-		Lines       []receiptLineBody `json:"lines"`
+		ReceiptType string `json:"receipt_type"`
+		SourceRef   string `json:"source_ref"`
+		GRNID       string `json:"grn_id"`
+		POID        string `json:"po_id"`
+		Supplier    string `json:"supplier"`
+		ReceivedBy  string `json:"received_by"`
+		Notes       string `json:"notes"`
+		// FacilityCode says where the goods arrived. It is what lets directed
+		// putaway pick a bin at this site rather than any site, and is required
+		// for a line that leaves bin_code empty.
+		FacilityCode string            `json:"facility_code"`
+		Lines        []receiptLineBody `json:"lines"`
 	}
 	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
@@ -46,6 +51,15 @@ func (a *API) CreateReceipt(c *gin.Context) {
 	if uid, ok := middleware.UserID(c); ok {
 		createdBy = &uid
 	}
+	var facilityID *uuid.UUID
+	if s := strings.TrimSpace(body.FacilityCode); s != "" {
+		f, ferr := a.Store.GetFacilityByCode(c.Request.Context(), s)
+		if ferr != nil {
+			badRequest(c, "unknown facility_code")
+			return
+		}
+		facilityID = &f.ID
+	}
 	a.withIdempotency(c, func() (int, any) {
 		r, err := a.Store.CreateReceipt(c.Request.Context(), store.CreateReceiptInput{
 			ReceiptType: body.ReceiptType,
@@ -55,11 +69,12 @@ func (a *API) CreateReceipt(c *gin.Context) {
 			Supplier:    strPtr(body.Supplier),
 			ReceivedBy:  strPtr(body.ReceivedBy),
 			Notes:       strPtr(body.Notes),
+			FacilityID:  facilityID,
 			Lines:       lines,
 			CreatedBy:   createdBy,
 		})
 		if err != nil {
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusCreated, r
 	})

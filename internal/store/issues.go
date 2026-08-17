@@ -63,13 +63,21 @@ func (s *Store) CreateIssue(ctx context.Context, in CreateIssueInput) (models.Is
 	}
 
 	for _, line := range in.Lines {
+		// Interpret the line's unit before anything else looks at the quantity:
+		// bin selection has to search for the base-unit amount, not for "3" when
+		// the operator meant three pallets.
+		conv, err := s.convertToBase(ctx, tx, line.ItemID, line.Qty, line.UOM)
+		if err != nil {
+			return issue, err
+		}
+
 		// Callers that don't track warehouse bin topology (e.g. iag-fleet
 		// issuing parts on a maintenance WO) leave bin_code empty; resolve a
 		// concrete available bin here so delegation works without leaking
 		// warehouse layout into the calling service.
 		binCode := line.BinCode
 		if binCode == "" {
-			resolved, rerr := s.pickAvailableBinCode(ctx, line.ItemID, line.Qty, line.LotKey, line.SerialKey)
+			resolved, rerr := s.pickAvailableBinCode(ctx, line.ItemID, conv.BaseQty, line.LotKey, line.SerialKey)
 			if rerr != nil {
 				return issue, fmt.Errorf("auto-select bin for item %s: %w", line.ItemID, rerr)
 			}
@@ -82,11 +90,14 @@ func (s *Store) CreateIssue(ctx context.Context, in CreateIssueInput) (models.Is
 		lotKey, serialKey := normalizeKeys(line.LotKey, line.SerialKey)
 		var il models.IssueLine
 		err = tx.QueryRow(ctx, `
-			INSERT INTO wh_issue_lines (issue_id, item_id, qty, uom, bin_id, lot_key, serial_key)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			RETURNING id, issue_id, item_id, qty, uom, bin_id, lot_key, serial_key`,
-			issue.ID, line.ItemID, line.Qty, line.UOM, bin.ID, lotKey, serialKey,
-		).Scan(&il.ID, &il.IssueID, &il.ItemID, &il.Qty, &il.UOM, &il.BinID, &il.LotKey, &il.SerialKey)
+			INSERT INTO wh_issue_lines (issue_id, item_id, qty, uom, bin_id, lot_key, serial_key,
+				entered_qty, entered_uom, uom_factor)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			RETURNING id, issue_id, item_id, qty, uom, bin_id, lot_key, serial_key, entered_qty, entered_uom, uom_factor`,
+			issue.ID, line.ItemID, conv.BaseQty, conv.BaseUOM, bin.ID, lotKey, serialKey,
+			conv.EnteredQty, conv.EnteredUOM, conv.Factor,
+		).Scan(&il.ID, &il.IssueID, &il.ItemID, &il.Qty, &il.UOM, &il.BinID, &il.LotKey, &il.SerialKey,
+			&il.EnteredQty, &il.EnteredUOM, &il.UOMFactor)
 		if err != nil {
 			return issue, err
 		}
@@ -141,7 +152,8 @@ func (s *Store) GetIssue(ctx context.Context, id uuid.UUID) (models.Issue, error
 		return iss, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT il.id, il.issue_id, il.item_id, il.qty, il.uom, il.bin_id, il.lot_key, il.serial_key, b.code
+		SELECT il.id, il.issue_id, il.item_id, il.qty, il.uom, il.bin_id, il.lot_key, il.serial_key,
+			il.entered_qty, il.entered_uom, il.uom_factor, b.code
 		FROM wh_issue_lines il JOIN wh_bins b ON b.id = il.bin_id WHERE il.issue_id = $1`, id)
 	if err != nil {
 		return iss, err
@@ -149,7 +161,9 @@ func (s *Store) GetIssue(ctx context.Context, id uuid.UUID) (models.Issue, error
 	defer rows.Close()
 	for rows.Next() {
 		var line models.IssueLine
-		if err := rows.Scan(&line.ID, &line.IssueID, &line.ItemID, &line.Qty, &line.UOM, &line.BinID, &line.LotKey, &line.SerialKey, &line.BinCode); err != nil {
+		if err := rows.Scan(&line.ID, &line.IssueID, &line.ItemID, &line.Qty, &line.UOM, &line.BinID,
+			&line.LotKey, &line.SerialKey, &line.EnteredQty, &line.EnteredUOM, &line.UOMFactor,
+			&line.BinCode); err != nil {
 			return iss, err
 		}
 		iss.Lines = append(iss.Lines, line)

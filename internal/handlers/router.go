@@ -157,6 +157,81 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/pack-sessions/:id", appmw.RequirePermission("warehouse.view_pack"), api.GetPackSession)
 		v1.POST("/pack-sessions", appmw.RequirePermission("warehouse.add_pack"), api.CreatePackSession)
 
+		// --- execution layer -------------------------------------------------
+		// Unit-of-measure conversions. Reachable by peer services because a
+		// caller posting a document line has to be able to ask what a unit means
+		// before it sends a quantity in it.
+		v1.GET("/items/:id/uoms", appmw.RequireServiceOrPermission("warehouse.view_uom"), api.ListItemUOMs)
+		v1.POST("/items/:id/uoms", appmw.RequirePermission("warehouse.change_uom"), api.UpsertItemUOM)
+		v1.POST("/items/:id/convert", appmw.RequireServiceOrPermission("warehouse.view_uom"), api.ConvertUOM)
+		v1.DELETE("/item-uoms/:id", appmw.RequirePermission("warehouse.change_uom"), api.DeleteItemUOM)
+
+		v1.GET("/putaway-rules", appmw.RequirePermission("warehouse.view_putaway"), api.ListPutawayRules)
+		v1.POST("/putaway-rules", appmw.RequirePermission("warehouse.change_putaway"), api.CreatePutawayRule)
+		v1.PATCH("/putaway-rules/:id", appmw.RequirePermission("warehouse.change_putaway"), api.UpdatePutawayRule)
+		v1.DELETE("/putaway-rules/:id", appmw.RequirePermission("warehouse.change_putaway"), api.DeletePutawayRule)
+		v1.POST("/putaway/resolve", appmw.RequirePermission("warehouse.view_putaway"), api.ResolvePutaway)
+
+		v1.GET("/replenishment-levels", appmw.RequirePermission("warehouse.view_replen"), api.ListReplenLevels)
+		v1.POST("/replenishment-levels", appmw.RequirePermission("warehouse.change_replen"), api.UpsertReplenLevel)
+		v1.DELETE("/replenishment-levels/:id", appmw.RequirePermission("warehouse.change_replen"), api.DeleteReplenLevel)
+		v1.GET("/replenishment-tasks", appmw.RequirePermission("warehouse.view_replen"), api.ListReplenTasks)
+		v1.POST("/replenishment-tasks", appmw.RequirePermission("warehouse.add_replen_task"), api.CreateReplenTask)
+		// The generator is reachable by a service caller so the scheduled job can
+		// drive it with its own client credentials rather than a human's token.
+		v1.POST("/replenishment-tasks/generate", appmw.RequireServiceOrPermission("warehouse.add_replen_task"), api.GenerateReplenTasks)
+		v1.POST("/replenishment-tasks/:id/complete", appmw.RequirePermission("warehouse.complete_replen"), api.CompleteReplenTask)
+		v1.POST("/replenishment-tasks/:id/cancel", appmw.RequirePermission("warehouse.complete_replen"), api.CancelReplenTask)
+
+		v1.GET("/count-tasks", appmw.RequirePermission("warehouse.view_count"), api.ListCountTasks)
+		v1.POST("/count-tasks", appmw.RequirePermission("warehouse.add_count"), api.CreateCountTask)
+		v1.GET("/count-tasks/:id", appmw.RequirePermission("warehouse.view_count"), api.GetCountTask)
+		v1.POST("/count-tasks/:id/lines", appmw.RequirePermission("warehouse.perform_count"), api.AddCountLine)
+		v1.POST("/count-tasks/:id/lines/:lineId/count", appmw.RequirePermission("warehouse.perform_count"), api.RecordCount)
+		v1.POST("/count-tasks/:id/submit", appmw.RequirePermission("warehouse.perform_count"), api.SubmitCountTask)
+		// Reviewing a line is part of approving the sheet, so it takes the
+		// approver's permission rather than the counter's.
+		v1.POST("/count-tasks/:id/lines/:lineId/status", appmw.RequirePermission("warehouse.approve_count"), api.SetCountLineStatus)
+		v1.POST("/count-tasks/:id/reopen", appmw.RequirePermission("warehouse.approve_count"), api.ReopenCountTask)
+		v1.POST("/count-tasks/:id/approve", appmw.RequirePermission("warehouse.approve_count"), api.ApproveCountTask)
+		v1.POST("/count-tasks/:id/cancel", appmw.RequirePermission("warehouse.add_count"), api.CancelCountTask)
+		v1.POST("/abc-classification/run", appmw.RequireServiceOrPermission("warehouse.classify_abc"), api.RunABCClassification)
+
+		v1.GET("/handling-units", appmw.RequirePermission("warehouse.view_hu"), api.ListHandlingUnits)
+		v1.POST("/handling-units", appmw.RequirePermission("warehouse.add_hu"), api.CreateHandlingUnit)
+		v1.GET("/handling-units/:lpn", appmw.RequirePermission("warehouse.view_hu"), api.GetHandlingUnit)
+		v1.POST("/handling-units/:lpn/load", appmw.RequirePermission("warehouse.change_hu"), api.LoadHandlingUnit)
+		v1.POST("/handling-units/:lpn/unload", appmw.RequirePermission("warehouse.change_hu"), api.UnloadHandlingUnit)
+		v1.POST("/handling-units/:lpn/move", appmw.RequirePermission("warehouse.change_hu"), api.MoveHandlingUnit)
+		v1.POST("/handling-units/:lpn/nest", appmw.RequirePermission("warehouse.change_hu"), api.NestHandlingUnit)
+		v1.POST("/handling-units/:lpn/status", appmw.RequirePermission("warehouse.change_hu"), api.SetHandlingUnitStatus)
+
+		v1.GET("/barcodes", appmw.RequirePermission("warehouse.view_barcode"), api.ListBarcodes)
+		v1.POST("/barcodes", appmw.RequirePermission("warehouse.change_barcode"), api.CreateBarcode)
+		v1.DELETE("/barcodes/:id", appmw.RequirePermission("warehouse.change_barcode"), api.DeleteBarcode)
+		v1.GET("/scan/resolve", appmw.RequirePermission("warehouse.scan"), api.ScanResolve)
+		v1.POST("/scan/move", appmw.RequirePermission("warehouse.scan"), api.ScanMove)
+		v1.POST("/pick-lists/:id/lines/:lineId/pick", appmw.RequirePermission("warehouse.confirm_pick"), api.ScanPick)
+
+		// Gate passes and handover slips. Authorising, verifying at the barrier
+		// and releasing are three separate permissions on purpose: the storeman
+		// who raises a pass, the manager who signs it and the guard who lets the
+		// lorry out are three different people, and the control only holds if the
+		// system agrees.
+		v1.GET("/slips", appmw.RequirePermission("warehouse.view_slip"), api.ListSlips)
+		v1.POST("/slips", appmw.RequirePermission("warehouse.add_slip"), api.CreateSlip)
+		// Verify is registered before /slips/:id so a guard's scan of a token is
+		// never swallowed by the id route.
+		v1.GET("/slips/verify/:token", appmw.RequirePermission("warehouse.verify_slip"), api.VerifySlip)
+		v1.GET("/slips/:id", appmw.RequirePermission("warehouse.view_slip"), api.GetSlip)
+		v1.GET("/slips/:id/print", appmw.RequirePermission("warehouse.view_slip"), api.PrintSlip)
+		v1.POST("/slips/:id/authorize", appmw.RequirePermission("warehouse.authorize_slip"), api.AuthorizeSlip)
+		v1.POST("/slips/:id/reject", appmw.RequirePermission("warehouse.authorize_slip"), api.RejectSlip)
+		v1.POST("/slips/:id/release", appmw.RequirePermission("warehouse.verify_slip"), api.ReleaseSlip)
+		v1.POST("/slips/:id/return", appmw.RequirePermission("warehouse.change_slip"), api.ReturnSlip)
+		v1.POST("/slips/:id/close", appmw.RequirePermission("warehouse.change_slip"), api.CloseSlip)
+		v1.POST("/slips/:id/cancel", appmw.RequirePermission("warehouse.change_slip"), api.CancelSlip)
+
 		admin := v1.Group("/admin")
 		admin.Use(appmw.RequirePermission("warehouse.admin.read"))
 		{

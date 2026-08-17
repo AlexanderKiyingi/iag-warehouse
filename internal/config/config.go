@@ -52,6 +52,21 @@ type Config struct {
 	InventoryCostingEnabled bool
 	// BaseCurrency stamps the valuation figures on movement events. Default UGX.
 	BaseCurrency string
+
+	// CountRequireSeparateApprover enforces segregation of duties on cycle
+	// counts: whoever raised, submitted or counted a sheet cannot approve it.
+	// Defaults ON — this is the control that makes a count worth anything, and a
+	// deployment that wants it off should have to say so. Set via
+	// WAREHOUSE_COUNT_REQUIRE_SEPARATE_APPROVER=false (single-operator sites and
+	// test environments are the honest reasons to).
+	CountRequireSeparateApprover bool
+	// SlipRequireSeparateAuthorizer applies the same rule to gate passes and
+	// handover slips: the person who wrote out what is leaving cannot also be the
+	// one who authorises it. Defaults ON. Set via
+	// WAREHOUSE_SLIP_REQUIRE_SEPARATE_AUTHORIZER=false.
+	SlipRequireSeparateAuthorizer bool
+	// OrgName is printed at the head of gate passes and handover slips.
+	OrgName string
 }
 
 func Load() (*Config, error) {
@@ -94,6 +109,11 @@ func Load() (*Config, error) {
 		EventBusEnabled:         strings.EqualFold(getenv("EVENT_BUS_ENABLED", "true"), "true"),
 		InventoryCostingEnabled: strings.EqualFold(os.Getenv("INVENTORY_COSTING_ENABLED"), "true"),
 		BaseCurrency:            getenv("BASE_CURRENCY", "UGX"),
+		// Both segregation-of-duties gates default ON: they are only disabled by
+		// an explicit "false", never by an unset variable.
+		CountRequireSeparateApprover:  !strings.EqualFold(os.Getenv("WAREHOUSE_COUNT_REQUIRE_SEPARATE_APPROVER"), "false"),
+		SlipRequireSeparateAuthorizer: !strings.EqualFold(os.Getenv("WAREHOUSE_SLIP_REQUIRE_SEPARATE_AUTHORIZER"), "false"),
+		OrgName:                       getenv("WAREHOUSE_ORG_NAME", "Inspire Africa Group"),
 	}
 
 	if c.DatabaseURL == "" {

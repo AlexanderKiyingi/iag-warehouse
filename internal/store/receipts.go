@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,8 +30,11 @@ type CreateReceiptInput struct {
 	Supplier    *string
 	ReceivedBy  *string
 	Notes       *string
-	Lines       []ReceiptLineInput
-	CreatedBy   *uuid.UUID
+	// FacilityID narrows directed putaway to the site the goods actually arrived
+	// at, so a delivery to the mill is never directed to a bin in the yard.
+	FacilityID *uuid.UUID
+	Lines      []ReceiptLineInput
+	CreatedBy  *uuid.UUID
 }
 
 // receiptReadCols selects a receipt plus its computed monetary value (Σ of the
@@ -65,22 +69,58 @@ func (s *Store) CreateReceipt(ctx context.Context, in CreateReceiptInput) (model
 	}
 
 	for _, line := range in.Lines {
-		bin, _, err := s.GetBinByCode(ctx, line.BinCode)
+		// Interpret the unit first: a line for 5 "bag" is 300kg of stock, and both
+		// the putaway search and the stored quantity have to be the 300.
+		conv, err := s.convertToBase(ctx, tx, line.ItemID, line.Qty, line.UOM)
 		if err != nil {
 			return receipt, err
+		}
+		// The purchase price arrives per purchase unit. Costing works entirely in
+		// base units, so rebase it here rather than leaving every downstream
+		// valuation to remember that a "case" was priced as a case.
+		unitCost := line.UnitCost
+		if conv.Factor > 0 {
+			unitCost = line.UnitCost / conv.Factor
 		}
 		lotKey, _ := normalizeKeys(line.LotKey, "")
-		var rl models.ReceiptLine
-		err = tx.QueryRow(ctx, `
-			INSERT INTO wh_receipt_lines (receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id, unit_cost)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			RETURNING id, receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id`,
-			receipt.ID, line.ItemID, line.Qty, line.UOM, bin.ID, lotKey, line.BatchBusinessID, line.UnitCost,
-		).Scan(&rl.ID, &rl.ReceiptID, &rl.ItemID, &rl.Qty, &rl.UOM, &rl.BinID, &rl.LotKey, &rl.BatchBusinessID)
+
+		binCode := line.BinCode
+		var ruleID *uuid.UUID
+		if binCode == "" {
+			// No bin named — this is where the system decides instead of recording
+			// a decision somebody else already made.
+			sug, perr := s.ResolvePutawayBin(ctx, PutawayRequest{
+				ItemID:     line.ItemID,
+				Qty:        conv.BaseQty,
+				LotKey:     lotKey,
+				FacilityID: in.FacilityID,
+			})
+			if perr != nil {
+				return receipt, fmt.Errorf("putaway for item %s: %w", line.ItemID, perr)
+			}
+			binCode = sug.BinCode
+			ruleID = sug.RuleID
+		}
+		bin, _, err := s.GetBinByCode(ctx, binCode)
 		if err != nil {
 			return receipt, err
 		}
-		rl.BinCode = line.BinCode
+
+		var rl models.ReceiptLine
+		err = tx.QueryRow(ctx, `
+			INSERT INTO wh_receipt_lines (receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id,
+				unit_cost, entered_qty, entered_uom, uom_factor, putaway_rule_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			RETURNING id, receipt_id, item_id, qty, uom, bin_id, lot_key, batch_business_id,
+				entered_qty, entered_uom, uom_factor, putaway_rule_id`,
+			receipt.ID, line.ItemID, conv.BaseQty, conv.BaseUOM, bin.ID, lotKey, line.BatchBusinessID,
+			unitCost, conv.EnteredQty, conv.EnteredUOM, conv.Factor, ruleID,
+		).Scan(&rl.ID, &rl.ReceiptID, &rl.ItemID, &rl.Qty, &rl.UOM, &rl.BinID, &rl.LotKey, &rl.BatchBusinessID,
+			&rl.EnteredQty, &rl.EnteredUOM, &rl.UOMFactor, &rl.PutawayRuleID)
+		if err != nil {
+			return receipt, err
+		}
+		rl.BinCode = binCode
 		receipt.Lines = append(receipt.Lines, rl)
 	}
 
@@ -123,7 +163,8 @@ func (s *Store) GetReceipt(ctx context.Context, id uuid.UUID) (models.Receipt, e
 		return r, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT rl.id, rl.receipt_id, rl.item_id, rl.qty, rl.uom, rl.bin_id, rl.lot_key, rl.batch_business_id, b.code
+		SELECT rl.id, rl.receipt_id, rl.item_id, rl.qty, rl.uom, rl.bin_id, rl.lot_key, rl.batch_business_id,
+			rl.entered_qty, rl.entered_uom, rl.uom_factor, rl.putaway_rule_id, b.code
 		FROM wh_receipt_lines rl
 		JOIN wh_bins b ON b.id = rl.bin_id
 		WHERE rl.receipt_id = $1`, id)
@@ -133,7 +174,9 @@ func (s *Store) GetReceipt(ctx context.Context, id uuid.UUID) (models.Receipt, e
 	defer rows.Close()
 	for rows.Next() {
 		var line models.ReceiptLine
-		if err := rows.Scan(&line.ID, &line.ReceiptID, &line.ItemID, &line.Qty, &line.UOM, &line.BinID, &line.LotKey, &line.BatchBusinessID, &line.BinCode); err != nil {
+		if err := rows.Scan(&line.ID, &line.ReceiptID, &line.ItemID, &line.Qty, &line.UOM, &line.BinID,
+			&line.LotKey, &line.BatchBusinessID, &line.EnteredQty, &line.EnteredUOM, &line.UOMFactor,
+			&line.PutawayRuleID, &line.BinCode); err != nil {
 			return r, err
 		}
 		r.Lines = append(r.Lines, line)
@@ -172,13 +215,13 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 		return models.Receipt{}, err
 	}
 	type lineRow struct {
-		itemID    uuid.UUID
-		qty       float64
-		binID     uuid.UUID
-		lotKey    string
-		batchID   *string
-		sku       string
-		unitCost  float64
+		itemID   uuid.UUID
+		qty      float64
+		binID    uuid.UUID
+		lotKey   string
+		batchID  *string
+		sku      string
+		unitCost float64
 	}
 	var lines []lineRow
 	for rows.Next() {
@@ -209,16 +252,16 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 			return models.Receipt{}, err
 		}
 		movID, err := s.insertMovementTx(ctx, tx, movementInput{
-			MovementType: models.MovementReceipt,
-			ItemID:       &l.itemID,
-			ToBinID:      &l.binID,
-			Qty:          l.qty,
-			LotKey:       lotKey,
-			SerialKey:    serialKey,
-			RefType:      refType,
-			RefID:        &receiptID,
+			MovementType:    models.MovementReceipt,
+			ItemID:          &l.itemID,
+			ToBinID:         &l.binID,
+			Qty:             l.qty,
+			LotKey:          lotKey,
+			SerialKey:       serialKey,
+			RefType:         refType,
+			RefID:           &receiptID,
 			BatchBusinessID: l.batchID,
-			ActorID:      actorID,
+			ActorID:         actorID,
 		})
 		if err != nil {
 			return models.Receipt{}, err

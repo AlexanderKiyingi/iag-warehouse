@@ -32,6 +32,12 @@ const (
 	TypeStockBelowMinimum   = "warehouse.stock.below_minimum"
 	TypeMovementPosted      = "warehouse.movement.posted"
 	TypeAlertRaised         = "warehouse.alert.raised"
+
+	// Execution layer.
+	TypeCountApproved = "warehouse.count.approved"
+	TypeSlipIssued    = "warehouse.slip.issued"
+	TypeSlipReleased  = "warehouse.slip.released"
+	TypeSlipReturned  = "warehouse.slip.returned"
 )
 
 type PlatformEvent struct {

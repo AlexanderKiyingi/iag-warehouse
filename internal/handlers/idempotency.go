@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -58,17 +59,53 @@ func conflict(c *gin.Context, msg string) {
 	c.JSON(http.StatusConflict, gin.H{"error": msg})
 }
 
+// storeErr maps a store error onto a status code. It matches with errors.Is
+// rather than equality because the execution-layer paths wrap their sentinels
+// with the specific reason ("fixed_bin needs a target_bin_code"), and that
+// message is the most useful part of the response — losing it to a bare 500
+// would turn every validation failure into a support ticket.
 func storeErr(c *gin.Context, err error) {
-	switch err {
-	case store.ErrNotFound:
-		notFound(c, "not found")
-	case store.ErrConflict:
-		conflict(c, "conflict")
-	case store.ErrInsufficientStock:
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient stock"})
-	case store.ErrStockNotAvailable:
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "stock on QC hold or damaged"})
+	c.JSON(statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)})
+}
+
+// statusForStoreErr maps a store sentinel onto a status code. Matching is by
+// errors.Is rather than equality because the execution-layer paths wrap their
+// sentinels with the specific reason, and handlers running inside
+// withIdempotency need the code without writing the response themselves.
+func statusForStoreErr(err error) int {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, store.ErrInvalidArgument):
+		return http.StatusBadRequest
+	case errors.Is(err, store.ErrForbidden):
+		return http.StatusForbidden
+	// A putaway that finds nowhere to go is not a bad request — the warehouse is
+	// genuinely full — so it gets a conflict a client can tell apart from a
+	// malformed payload.
+	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrNoPutawayBin):
+		return http.StatusConflict
+	case errors.Is(err, store.ErrInsufficientStock), errors.Is(err, store.ErrStockNotAvailable):
+		return http.StatusUnprocessableEntity
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return http.StatusInternalServerError
+	}
+}
+
+// messageForStoreErr keeps the wrapped reason where there is one, since "max_qty
+// must be at least min_qty" is worth far more to a caller than "conflict", and
+// substitutes a fixed phrase for the bare sentinels that carry no detail.
+func messageForStoreErr(err error) string {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "not found"
+	case errors.Is(err, store.ErrNoPutawayBin):
+		return "no putaway bin available with room for this quantity"
+	case errors.Is(err, store.ErrInsufficientStock):
+		return "insufficient stock"
+	case errors.Is(err, store.ErrStockNotAvailable):
+		return "stock on QC hold or damaged"
+	default:
+		return err.Error()
 	}
 }
