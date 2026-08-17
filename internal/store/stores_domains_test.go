@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/google/uuid"
@@ -22,9 +21,9 @@ import (
 // It applies all migrations (incl. 010) then exercises create→list→update→
 // delete (plus the gate-pass return action) against the real tables.
 func TestStoresDomainsCRUD(t *testing.T) {
-	dsn := os.Getenv("WAREHOUSE_TEST_DB")
+	dsn := testDSN()
 	if dsn == "" {
-		t.Skip("set WAREHOUSE_TEST_DB to run the stores-domain integration test")
+		t.Skip("set WAREHOUSE_TEST_DB (or WAREHOUSE_TEST_DATABASE_URL) to run database tests")
 	}
 	ctx := context.Background()
 	pool, err := db.NewPool(ctx, dsn)

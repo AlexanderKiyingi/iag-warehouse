@@ -276,13 +276,18 @@ Also fixed: `ListAssets` and `GetAssetByTag` scanned 11 destinations from a
 ## Testing
 
 `internal/store/wms_integration_test.go` runs the whole layer against a real
-Postgres. It skips unless `WAREHOUSE_TEST_DATABASE_URL` is set:
+Postgres. Every database-backed test in the package resolves its DSN through one
+helper, so a single variable turns them all on — `WAREHOUSE_TEST_DB` is
+preferred, `WAREHOUSE_TEST_DATABASE_URL` is accepted as a fallback:
 
 ```bash
 createdb wh_wms_test
-WAREHOUSE_TEST_DATABASE_URL="postgres://user:pass@localhost:5432/wh_wms_test?sslmode=disable" \
+WAREHOUSE_TEST_DB="postgres://user:pass@localhost:5432/wh_wms_test?sslmode=disable" \
   go test ./internal/store/
 ```
+
+CI sets it against the workflow's Postgres service, so these run on every push —
+see `.github/workflows/warehouse.yml` in the meta-repo.
 
 These are worth the setup: most of what was added is enforced by SQL — partial
 unique indexes, CHECK constraints, `FOR UPDATE` ordering, a recursive CTE — and

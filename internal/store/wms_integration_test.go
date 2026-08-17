@@ -23,11 +23,25 @@ import (
 // indexes, CHECK constraints, FOR UPDATE ordering, a recursive CTE — and none of
 // that is exercised by a unit test that stubs the database out.
 
+// testDSN returns the scratch database to run against, or "" to skip.
+//
+// Two names are honoured because two arrived independently: WAREHOUSE_TEST_DB
+// predates this file, WAREHOUSE_TEST_DATABASE_URL came with it. Rather than
+// leave CI having to set both — and someone eventually setting only one and
+// silently skipping half the database tests — every DB-backed test in this
+// package resolves through here.
+func testDSN() string {
+	if v := os.Getenv("WAREHOUSE_TEST_DB"); v != "" {
+		return v
+	}
+	return os.Getenv("WAREHOUSE_TEST_DATABASE_URL")
+}
+
 func testPool(t *testing.T) (*Store, context.Context) {
 	t.Helper()
-	url := os.Getenv("WAREHOUSE_TEST_DATABASE_URL")
+	url := testDSN()
 	if url == "" {
-		t.Skip("WAREHOUSE_TEST_DATABASE_URL not set")
+		t.Skip("set WAREHOUSE_TEST_DB (or WAREHOUSE_TEST_DATABASE_URL) to run database tests")
 	}
 	ctx := context.Background()
 	pool, err := db.NewPool(ctx, url)
