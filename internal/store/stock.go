@@ -158,29 +158,63 @@ func (s *Store) releaseReservationTx(ctx context.Context, tx pgx.Tx, key balance
 	return err
 }
 
+// adjustBalanceTx applies a signed delta to a stock position, creating it if it
+// does not exist yet.
+//
+// It cannot be written as a single INSERT ... ON CONFLICT DO UPDATE. Postgres
+// evaluates CHECK constraints against the tuple *proposed* for insertion before
+// it detects the conflict, so once migration 005 added `qty >= 0` every negative
+// delta failed the constraint on the insert candidate even when the row already
+// existed and the resulting balance would have been perfectly positive — which
+// broke every downward adjustment and cycle-count correction.
+//
+// So: lock the position, decide, then write. The existing row is locked FOR
+// UPDATE so concurrent adjustments to the same position serialise, and the
+// insert branch keeps ON CONFLICT DO UPDATE to close the race where two callers
+// create the same position at once. That branch is only reachable with a
+// non-negative delta, so its insert candidate can never trip the constraint.
 func (s *Store) adjustBalanceTx(ctx context.Context, tx pgx.Tx, key balanceKey, delta float64, status string) error {
 	lotKey, serialKey := normalizeKeys(key.LotKey, key.SerialKey)
 	if status == "" {
 		status = models.StatusAvailable
 	}
-	var newQty float64
+
+	var currentQty float64
 	err := tx.QueryRow(ctx, `
-		INSERT INTO wh_stock_balances (item_id, bin_id, lot_key, serial_key, qty, status)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (item_id, bin_id, lot_key, serial_key) DO UPDATE SET
-			qty = wh_stock_balances.qty + EXCLUDED.qty,
-			status = CASE WHEN EXCLUDED.qty = 0 THEN wh_stock_balances.status ELSE $6 END,
-			updated_at = NOW()
-		RETURNING qty`,
-		key.ItemID, key.BinID, lotKey, serialKey, delta, status,
-	).Scan(&newQty)
+		SELECT qty FROM wh_stock_balances
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4
+		FOR UPDATE`,
+		key.ItemID, key.BinID, lotKey, serialKey,
+	).Scan(&currentQty)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		if delta < 0 {
+			return ErrInsufficientStock
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO wh_stock_balances (item_id, bin_id, lot_key, serial_key, qty, status)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (item_id, bin_id, lot_key, serial_key) DO UPDATE SET
+				qty = wh_stock_balances.qty + EXCLUDED.qty,
+				status = CASE WHEN EXCLUDED.qty = 0 THEN wh_stock_balances.status ELSE $6 END,
+				updated_at = NOW()`,
+			key.ItemID, key.BinID, lotKey, serialKey, delta, status)
+		return err
+	}
 	if err != nil {
 		return err
 	}
-	if newQty < 0 {
+	if currentQty+delta < 0 {
 		return ErrInsufficientStock
 	}
-	return nil
+	_, err = tx.Exec(ctx, `
+		UPDATE wh_stock_balances
+		SET qty = qty + $5,
+			status = CASE WHEN $5 = 0 THEN status ELSE $6 END,
+			updated_at = NOW()
+		WHERE item_id = $1 AND bin_id = $2 AND lot_key = $3 AND serial_key = $4`,
+		key.ItemID, key.BinID, lotKey, serialKey, delta, status)
+	return err
 }
 
 func (s *Store) setBalanceStatusTx(ctx context.Context, tx pgx.Tx, itemID, binID uuid.UUID, lotKey, status string) error {
@@ -208,7 +242,12 @@ func (s *Store) insertMovementTx(ctx context.Context, tx pgx.Tx, in movementInpu
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,NOW()),$13)
 		RETURNING id`,
 		in.MovementType, in.ItemID, in.FromBinID, in.ToBinID, in.Qty, lotKey, serialKey,
-		in.RefType, in.RefID, in.BatchBusinessID, in.ActorID, in.OccurredAt, in.Attrs,
+		// attrs is NOT NULL: pgx encodes a nil map as SQL NULL, not as '{}', and no
+		// caller sets it, so passing it through raw makes every movement insert —
+		// and therefore every receipt, issue, transfer and adjustment — fail on the
+		// constraint. The column default never applies because the value is
+		// supplied explicitly.
+		in.RefType, in.RefID, in.BatchBusinessID, in.ActorID, in.OccurredAt, attrsOrEmpty(in.Attrs),
 	).Scan(&id)
 	return id, err
 }

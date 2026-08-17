@@ -14,7 +14,7 @@ import (
 
 func (s *Store) ListAssets(ctx context.Context) ([]models.Asset, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, asset_tag, serial_no, item_id, current_bin_id, condition, book_value_ref, attrs, created_at, updated_at
+		SELECT id, asset_tag, serial_no, item_id, current_bin_id, condition, book_value_ref, attrs, disposed_at, created_at, updated_at
 		FROM wh_assets ORDER BY asset_tag`)
 	if err != nil {
 		return nil, err
@@ -53,8 +53,20 @@ func (s *Store) CreateAsset(ctx context.Context, assetTag string, serialNo *stri
 func (s *Store) GetAssetByTag(ctx context.Context, tag string) (models.Asset, error) {
 	var a models.Asset
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, asset_tag, serial_no, item_id, current_bin_id, condition, book_value_ref, attrs, created_at, updated_at
+		SELECT id, asset_tag, serial_no, item_id, current_bin_id, condition, book_value_ref, attrs, disposed_at, created_at, updated_at
 		FROM wh_assets WHERE asset_tag = $1`, tag,
+	).Scan(&a.ID, &a.AssetTag, &a.SerialNo, &a.ItemID, &a.CurrentBinID, &a.Condition, &a.BookValueRef, &a.Attrs, &a.DisposedAt, &a.CreatedAt, &a.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return a, ErrNotFound
+	}
+	return a, err
+}
+
+func (s *Store) getAssetByID(ctx context.Context, id uuid.UUID) (models.Asset, error) {
+	var a models.Asset
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, asset_tag, serial_no, item_id, current_bin_id, condition, book_value_ref, attrs, disposed_at, created_at, updated_at
+		FROM wh_assets WHERE id = $1`, id,
 	).Scan(&a.ID, &a.AssetTag, &a.SerialNo, &a.ItemID, &a.CurrentBinID, &a.Condition, &a.BookValueRef, &a.Attrs, &a.DisposedAt, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, ErrNotFound
@@ -143,9 +155,9 @@ func (s *Store) CheckOutAsset(ctx context.Context, in CheckOutAssetInput) (model
 		RefID:        &a.ID,
 		ActorID:      in.ActorID,
 		Attrs: map[string]any{
-			"asset_tag":      in.AssetTag,
-			"to_department":  in.ToDepartment,
-			"custodian":      in.Custodian,
+			"asset_tag":     in.AssetTag,
+			"to_department": in.ToDepartment,
+			"custodian":     in.Custodian,
 		},
 	})
 	if err != nil {
@@ -154,9 +166,9 @@ func (s *Store) CheckOutAsset(ctx context.Context, in CheckOutAssetInput) (model
 
 	if s.bus != nil && s.bus.Enabled() {
 		data := map[string]any{
-			"asset_tag":      in.AssetTag,
-			"to_department":  in.ToDepartment,
-			"custodian":      in.Custodian,
+			"asset_tag":     in.AssetTag,
+			"to_department": in.ToDepartment,
+			"custodian":     in.Custodian,
 		}
 		if err := s.bus.PublishTx(ctx, tx, events.TypeAssetCheckedOut, data, in.AssetTag); err != nil {
 			return a, err
