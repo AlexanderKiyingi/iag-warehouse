@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -192,7 +193,11 @@ func (b *Bus) publishDirect(ctx context.Context, evt PlatformEvent, key string) 
 // notifications policy consumer, using the shared
 // {channel,recipient,templateId,variables} envelope.
 func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
-	if b == nil || !b.enabled || recipient == "" || templateID == "" {
+	if b == nil || !b.enabled || templateID == "" {
+		return
+	}
+	if recipient == "" {
+		warnNoNotifyRecipient()
 		return
 	}
 	vars := map[string]any{}
@@ -239,4 +244,16 @@ func nullableKey(s string) any {
 		return nil
 	}
 	return s
+}
+
+var notifyRecipientWarnOnce sync.Once
+
+// warnNoNotifyRecipient logs once when an alert is dropped for want of a
+// recipient. Without it an unset NOTIFY_DEFAULT_RECIPIENT is indistinguishable
+// from "no alerts were raised": the emitter returns early, nothing reaches the
+// notifications service, and no error appears anywhere.
+func warnNoNotifyRecipient() {
+	notifyRecipientWarnOnce.Do(func() {
+		slog.Warn("warehouse alert dropped: no recipient and NOTIFY_DEFAULT_RECIPIENT is unset; warehouse.alert.raised events will not be emitted")
+	})
 }
