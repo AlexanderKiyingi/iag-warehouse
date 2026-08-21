@@ -76,10 +76,29 @@ Transfers between bins are cost-neutral (no finance event needed); emit with
 3. Ignore zero-cost/transfer movements. Memo = `ref`. Skip cleanly if
    `total_cost` is absent (costing flag off upstream).
 
+> **Resolved: a receipt from a purchase order does NOT book here.** The plan
+> above overlooked that procurement already accrues the same delivery from
+> `procurement.grn.posted` (Cr 2150 for the received value). Doing both credits
+> GR/IR twice for one receipt while the vendor invoice clears it once — the cost
+> lands twice and 2150 keeps a permanent credit balance. Both entries balance,
+> so nothing would have caught it.
+>
+> Movements now carry `source_doc_type`, set to `procurement_grn` when the
+> receipt was raised from a GRN (`wh_receipts.grn_id`), and finance treats those
+> as cost-neutral. Receipts from any other source — field intake, returns,
+> transfers in — are unaffected and book as described above. Weighted-average
+> costing still runs for GRN receipts: `avg_cost` is needed to value later
+> issues, only the GL leg stands down.
+
 ## Procurement changes (GR/IR close-out)
 On supplier-bill match, book Dr 2150 GR/IR Clearing / Cr 2000 AP so the GR/IR
 account nets to zero once goods are both received and invoiced (three-way match).
 Requires procurement to reference the GRN so finance can tie bill ↔ receipt.
+
+Procurement also splits the received value into `inventory_value` (the
+`items.stockable` portion, which finance capitalises to 1400) and the remainder
+(expensed to 5000), and carries `unit_price` on each GRN line so warehouse can
+value the intake instead of receiving it at zero cost.
 
 ## Cross-cutting
 - **Idempotency:** `movement_id` (finance) and `ref` (procurement) dedupe retries.

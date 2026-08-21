@@ -194,8 +194,14 @@ func (c *Consumer) handleGRNPosted(ctx context.Context, data map[string]any) err
 		if b, ok := strField(m, "batch_business_id"); ok {
 			batchID = &b
 		}
+		// The PO price, so the intake is valued rather than received at zero
+		// cost. Safe now that a GRN-raised receipt no longer books its own GL
+		// entry: while it did, a priced receipt double-counted the delivery
+		// against GR/IR. Absent on emitters predating the field → unpriced, and
+		// the weighted-average engine leaves the item's cost alone.
 		lines = append(lines, store.ReceiptLineInput{
 			ItemID: itemID, Qty: qty, UOM: uom, BinCode: binCode, LotKey: lotKey, BatchBusinessID: batchID,
+			UnitCost: numField(m, "unit_price"),
 		})
 	}
 	_, err := c.store.CreateDraftReceiptFromGRNEvent(ctx, grnID, poID, lines)

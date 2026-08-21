@@ -65,7 +65,7 @@ func (s *Store) ProductionConsume(ctx context.Context, in ProductionConsumeInput
 		if err != nil {
 			return nil, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID, cost); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionConsume, line.ItemID, sku, &bin.ID, nil, line.Qty, lotKey, serialKey, batchID, cost, ""); err != nil {
 			return nil, err
 		}
 		eventLines = append(eventLines, map[string]any{
@@ -157,7 +157,7 @@ func (s *Store) ProductionOutput(ctx context.Context, in ProductionOutputInput) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID, outCost); err != nil {
+	if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementProductionOutput, in.ItemID, sku, nil, &bin.ID, in.Qty, lotKey, serialKey, batchID, outCost, ""); err != nil {
 		return nil, err
 	}
 

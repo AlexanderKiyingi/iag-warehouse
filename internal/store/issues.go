@@ -244,7 +244,7 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 		if err != nil {
 			return models.Issue{}, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil, cost); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil, cost, ""); err != nil {
 			return models.Issue{}, err
 		}
 		eventLines = append(eventLines, map[string]any{

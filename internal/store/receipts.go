@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"iag-warehouse/backend/internal/events"
+	"iag-warehouse/backend/internal/inventory"
 	"iag-warehouse/backend/internal/models"
 )
 
@@ -192,12 +194,22 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 	defer tx.Rollback(ctx)
 
 	var status string
-	err = tx.QueryRow(ctx, `SELECT status FROM wh_receipts WHERE id = $1 FOR UPDATE`, receiptID).Scan(&status)
+	var grnID *string
+	err = tx.QueryRow(ctx, `SELECT status, grn_id FROM wh_receipts WHERE id = $1 FOR UPDATE`, receiptID).Scan(&status, &grnID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Receipt{}, ErrNotFound
 	}
 	if err != nil {
 		return models.Receipt{}, err
+	}
+	// Where these goods came from. A receipt raised against a procurement GRN is
+	// already accounted for by procurement.grn.posted — finance accrues the
+	// GR/IR from that event — so the movement this posting emits must say so and
+	// let finance stand down. Both events booking the same delivery credited
+	// GR/IR twice, and the vendor invoice only ever clears it once.
+	sourceDocType := ""
+	if grnID != nil && strings.TrimSpace(*grnID) != "" {
+		sourceDocType = inventory.SourceDocProcurementGRN
 	}
 	if status == models.ReceiptPosted {
 		return s.GetReceipt(ctx, receiptID)
@@ -266,7 +278,7 @@ func (s *Store) PostReceipt(ctx context.Context, receiptID uuid.UUID, actorID *u
 		if err != nil {
 			return models.Receipt{}, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID, cost); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementReceipt, l.itemID, l.sku, nil, &l.binID, l.qty, lotKey, serialKey, l.batchID, cost, sourceDocType); err != nil {
 			return models.Receipt{}, err
 		}
 		eventLines = append(eventLines, map[string]any{

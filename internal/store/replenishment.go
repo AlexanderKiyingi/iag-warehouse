@@ -286,7 +286,7 @@ func (s *Store) CompleteReplenTask(ctx context.Context, id uuid.UUID, movedQty *
 			return models.ReplenTask{}, err
 		}
 		// Relocating stock is cost-neutral — same as any other bin transfer.
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementTransfer, itemID, sku, &fromBin, &toBin, moved, lotKey, "", nil, movementCost{}); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementTransfer, itemID, sku, &fromBin, &toBin, moved, lotKey, "", nil, movementCost{}, ""); err != nil {
 			return models.ReplenTask{}, err
 		}
 	}

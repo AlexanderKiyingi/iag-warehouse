@@ -302,7 +302,11 @@ func (s *Store) ListLowStock(ctx context.Context) ([]LowStockItem, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost) error {
+// sourceDocType names the upstream document that caused the movement, where
+// that decides who accounts for it (see inventory.SourceDocProcurementGRN).
+// Empty for movements this service originates, which is all of them but a
+// receipt raised from a procurement GRN.
+func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost, sourceDocType string) error {
 	if s.invBridge == nil {
 		return nil
 	}
@@ -316,11 +320,12 @@ func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID
 		SerialKey:    serialKey,
 		// Valuation (zero unless costing enabled + priced) — finance books the GL
 		// from these; a zero total_cost is a no-op downstream.
-		UnitCost:     cost.UnitCost,
-		TotalCost:    cost.TotalCost,
-		AvgCostAfter: cost.AvgCostAfter,
-		Ref:          cost.Ref,
-		Currency:     cost.Currency,
+		UnitCost:      cost.UnitCost,
+		TotalCost:     cost.TotalCost,
+		AvgCostAfter:  cost.AvgCostAfter,
+		Ref:           cost.Ref,
+		Currency:      cost.Currency,
+		SourceDocType: sourceDocType,
 	}
 	if fromBin != nil {
 		payload.FromBinID = fromBin.String()

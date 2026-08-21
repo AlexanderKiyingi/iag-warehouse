@@ -117,7 +117,7 @@ func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in Adjustment
 		if err != nil {
 			return adj, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost, ""); err != nil {
 			return adj, err
 		}
 	}

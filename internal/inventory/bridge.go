@@ -45,7 +45,18 @@ type MovementPayload struct {
 	UnitCost     float64 `json:"unit_cost,omitempty"`      // receipt: PO cost; issue: avg cost used
 	TotalCost    float64 `json:"total_cost,omitempty"`     // signed valuation delta (+in / -out)
 	AvgCostAfter float64 `json:"avg_cost_after,omitempty"` // moving-average cost after the move
+
+	// SourceDocType names the document that caused this movement, where that
+	// changes who accounts for it. Empty means "no upstream document" and the
+	// movement is accounted for here, as it always was.
+	SourceDocType string `json:"source_doc_type,omitempty"`
 }
+
+// SourceDocProcurementGRN marks a movement raised by a procurement goods-receipt
+// note. Finance books such a receipt from procurement.grn.posted and ignores the
+// movement, so that one delivery credits GR/IR clearing once rather than twice.
+// Keep the value in step with iag-finance internal/ledger/inventory.go.
+const SourceDocProcurementGRN = "procurement_grn"
 
 // EmitMovementPosted enqueues warehouse.movement.posted into the outbox inside
 // tx, so the valued inventory movement commits atomically with the stock write
@@ -75,6 +86,11 @@ func (b *Bridge) EmitMovementPosted(ctx context.Context, tx pgx.Tx, payload Move
 	}
 	if payload.Attrs != nil {
 		data["attrs"] = payload.Attrs
+	}
+	// Emitted regardless of whether a cost was computed: it says who accounts
+	// for the movement, which is true even when the valuation is not yet known.
+	if payload.SourceDocType != "" {
+		data["source_doc_type"] = payload.SourceDocType
 	}
 	// Valuation for finance's GL posting — emitted only once the WAC engine has
 	// computed a cost, so finance stays dormant until then.

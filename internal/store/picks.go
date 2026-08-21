@@ -153,7 +153,7 @@ func (s *Store) ConfirmPickList(ctx context.Context, pickListID uuid.UUID, actor
 			}
 			// A pick is an internal allocation, not a costed goods-out event (the
 			// subsequent issue/dispatch carries COGS), so it emits no valuation.
-			if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, picked, lotKey, "", nil, movementCost{}); err != nil {
+			if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementPick, l.itemID, l.sku, &l.binID, nil, picked, lotKey, "", nil, movementCost{}, ""); err != nil {
 				return models.PickList{}, err
 			}
 		}

@@ -385,7 +385,7 @@ func (s *Store) MoveHandlingUnit(ctx context.Context, huID uuid.UUID, toBinCode 
 		if err != nil {
 			return models.HandlingUnit{}, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementTransfer, c.itemID, c.sku, fromBin, &toBin.ID, c.qty, c.lotKey, c.serialKey, nil, movementCost{}); err != nil {
+		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementTransfer, c.itemID, c.sku, fromBin, &toBin.ID, c.qty, c.lotKey, c.serialKey, nil, movementCost{}, ""); err != nil {
 			return models.HandlingUnit{}, err
 		}
 	}
