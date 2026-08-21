@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"iag-warehouse/backend/internal/events"
 	"iag-warehouse/backend/internal/middleware"
+	"iag-warehouse/backend/internal/models"
 	"iag-warehouse/backend/internal/slips"
 	"iag-warehouse/backend/internal/store"
 )
@@ -215,7 +217,37 @@ func (a *API) AuthorizeSlip(c *gin.Context) {
 		storeErr(c, err)
 		return
 	}
+	a.notifySlipDecision(c, slip, "authorised", "")
 	ok(c, slip)
+}
+
+// notifySlipDecision reports a slip sign-off to the ops desk.
+//
+// Unlike an asset disposal, a slip records the person it was issued to by
+// name only (issued_to_name) — there is no address on the record and warehouse
+// holds no user directory to resolve one. The desk address is therefore the
+// only honest recipient; the issued-to name goes in the body so whoever reads
+// the desk mailbox knows whose slip it is.
+func (a *API) notifySlipDecision(c *gin.Context, slip models.Slip, outcome, reason string) {
+	if a.Bus == nil || !a.Bus.Enabled() {
+		return
+	}
+	desk := events.DefaultNotifyRecipient()
+	if desk == "" {
+		return
+	}
+	ref := slip.ID.String()
+	if slip.SlipNo != nil && strings.TrimSpace(*slip.SlipNo) != "" {
+		ref = strings.TrimSpace(*slip.SlipNo)
+	}
+	body := "Slip " + ref + " issued to " + slip.IssuedToName + " was " + outcome + "."
+	if strings.TrimSpace(reason) != "" {
+		body += " Reason: " + reason
+	}
+	a.Bus.PublishAlert(c.Request.Context(), "", desk, "approval.decision", map[string]string{
+		"Title": "Slip " + outcome + ": " + ref,
+		"Body":  body,
+	}, slip.ID.String())
 }
 
 func (a *API) RejectSlip(c *gin.Context) {
@@ -239,6 +271,7 @@ func (a *API) RejectSlip(c *gin.Context) {
 		storeErr(c, err)
 		return
 	}
+	a.notifySlipDecision(c, slip, "rejected", body.Reason)
 	ok(c, slip)
 }
 

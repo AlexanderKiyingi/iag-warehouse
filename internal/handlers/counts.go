@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"iag-warehouse/backend/internal/events"
 	"iag-warehouse/backend/internal/middleware"
 	"iag-warehouse/backend/internal/store"
 )
@@ -213,6 +214,17 @@ func (a *API) ApproveCountTask(c *gin.Context) {
 	if err != nil {
 		storeErr(c, err)
 		return
+	}
+	// A count task identifies its submitter by user id, not address, and
+	// warehouse holds no user directory — so the ops desk is the recipient.
+	// Approving a count posts stock adjustments, which is worth a record.
+	if a.Bus != nil && a.Bus.Enabled() {
+		if desk := events.DefaultNotifyRecipient(); desk != "" {
+			a.Bus.PublishAlert(c.Request.Context(), "", desk, "approval.decision", map[string]string{
+				"Title": "Stock count approved: " + task.Code,
+				"Body": "Count task " + task.Code + " was approved; its variances have been posted as stock adjustments.",
+			}, task.ID.String())
+		}
 	}
 	ok(c, task)
 }

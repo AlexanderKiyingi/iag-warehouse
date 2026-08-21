@@ -3,12 +3,15 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"iag-warehouse/backend/internal/events"
 	"iag-warehouse/backend/internal/middleware"
+	"iag-warehouse/backend/internal/models"
 	"iag-warehouse/backend/internal/store"
 )
 
@@ -192,9 +195,15 @@ func (a *API) decideDisposal(c *gin.Context, approve bool) {
 		if approve {
 			row, p, e := a.Store.ApproveDisposal(c.Request.Context(), id, actor, hasPerm, strings.TrimSpace(body.Note))
 			d, progress, err = row, p, e
+			if e == nil {
+				a.notifyDisposalDecision(c, row, p, true)
+			}
 		} else {
 			row, p, e := a.Store.RejectDisposal(c.Request.Context(), id, actor, hasPerm, strings.TrimSpace(body.Note))
 			d, progress, err = row, p, e
+			if e == nil {
+				a.notifyDisposalDecision(c, row, p, false)
+			}
 		}
 		if err != nil {
 			switch {
@@ -210,6 +219,54 @@ func (a *API) decideDisposal(c *gin.Context, approve bool) {
 		}
 		return http.StatusOK, gin.H{"disposal": d, "approval": progress}
 	})
+}
+
+// notifyDisposalDecision emails the outcome of an asset-disposal approval.
+//
+// The requester is addressable here — DisposeAsset records RequestedBy from
+// the caller's token email — so a decision goes straight to them. A partial
+// approval still needing a further tier goes to the ops desk instead: the next
+// approver is a permission code, not a person, so there is no one to write to.
+//
+// Best effort: the decision is committed, and a notification problem must not
+// turn it into an error.
+func (a *API) notifyDisposalDecision(c *gin.Context, d models.AssetDisposal, prog *store.DisposalApprovalProgress, approved bool) {
+	if a.Bus == nil || !a.Bus.Enabled() {
+		return
+	}
+	ctx := c.Request.Context()
+	what := "Disposal of asset " + d.AssetTag + " (" + d.Method + ")"
+
+	if approved && prog != nil && !prog.Complete {
+		desk := events.DefaultNotifyRecipient()
+		if desk == "" {
+			return
+		}
+		tier := ""
+		if prog.NextTier != nil {
+			tier = " tier " + strconv.Itoa(*prog.NextTier)
+		}
+		a.Bus.PublishAlert(ctx, "", desk, "approval.pending", map[string]string{
+			"Title": "Disposal awaiting" + tier + ": " + d.AssetTag,
+			"Body": what + " requested by " + d.RequestedBy + " has cleared " +
+				strconv.Itoa(len(prog.ApprovedTiers)) + " of " + strconv.Itoa(len(prog.RequiredTiers)) +
+				" tiers and needs " + prog.NextPerm + ".",
+		}, d.ID.String())
+		return
+	}
+
+	recipient := strings.TrimSpace(d.RequestedBy)
+	if recipient == "" {
+		recipient = events.DefaultNotifyRecipient()
+	}
+	outcome := "rejected"
+	if approved {
+		outcome = "approved"
+	}
+	a.Bus.PublishAlert(ctx, "", recipient, "approval.decision", map[string]string{
+		"Title": "Disposal " + outcome + ": " + d.AssetTag,
+		"Body":  what + " was " + outcome + ".",
+	}, d.ID.String())
 }
 
 func (a *API) SparePartsByAsset(c *gin.Context) {
