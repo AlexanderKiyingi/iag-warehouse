@@ -69,6 +69,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/items", appmw.RequirePermission("warehouse.add_item"), api.CreateItem)
 		v1.GET("/items/:id", appmw.RequireServiceOrPermission("warehouse.view_item"), api.GetItem)
 		v1.PATCH("/items/:id", appmw.RequirePermission("warehouse.change_item"), api.PatchItem)
+		// Retiring or blocking a part is a different decision from editing its
+		// description, so it is a different permission on a different route.
+		v1.PATCH("/items/:id/status", appmw.RequirePermission("warehouse.change_item_status"), api.SetItemStatus)
 		v1.GET("/items/:id/balances", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.ItemBalances)
 
 		v1.GET("/receipts", appmw.RequirePermission("warehouse.view_receipt"), api.ListReceipts)
@@ -238,6 +241,12 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 			admin.GET("/audit-logs", api.ListAPIAuditLogs)
 			admin.GET("/monitoring/summary", api.AdminMonitoringSummary)
 			admin.GET("/monitoring/activity", api.AdminMonitoringActivity)
+			// The exception report: every time a control was bypassed, who did
+			// it and why. Admin-scoped because that is who reviews it.
+			admin.GET("/control-overrides", api.ListControlOverrides)
+			// Whether the valuation half of "quantity and value move together"
+			// is actually on, and what it has missed if it is not.
+			admin.GET("/valuation-health", api.ValuationHealth)
 		}
 	}
 

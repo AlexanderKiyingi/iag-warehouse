@@ -32,6 +32,11 @@ type CreateIssueInput struct {
 	Notes              *string
 	Lines              []IssueLineInput
 	CreatedBy          *uuid.UUID
+	// AllowRestrictedItems is set by the handler when the caller holds
+	// warehouse.override_item_status. It only lifts the `restricted` status —
+	// draft and blocked items are refused to everybody, because a permission
+	// that could transact a blocked item would make the block advisory.
+	AllowRestrictedItems bool
 }
 
 const issueReadCols = `id, status, department, cost_center, production_order_ref, work_order_ref,
@@ -51,6 +56,16 @@ func (s *Store) CreateIssue(ctx context.Context, in CreateIssueInput) (models.Is
 		return models.Issue{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Status gate before the header row exists, so a refused issue leaves no
+	// draft behind for somebody to find later and wonder about.
+	itemIDs := make([]uuid.UUID, 0, len(in.Lines))
+	for _, line := range in.Lines {
+		itemIDs = append(itemIDs, line.ItemID)
+	}
+	if err := s.assertItemsTransactable(ctx, tx, itemIDs, ItemActionIssue, in.AllowRestrictedItems, in.CreatedBy); err != nil {
+		return models.Issue{}, err
+	}
 
 	issue, err := scanIssueRow(tx.QueryRow(ctx, `
 		INSERT INTO wh_issues (department, cost_center, production_order_ref, work_order_ref, requested_by, priority, batch_business_id, notes, created_by)

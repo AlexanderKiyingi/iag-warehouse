@@ -84,9 +84,35 @@ type Item struct {
 	UOM           string         `json:"uom"`
 	MinQty        float64        `json:"min_qty"`
 	MaxQty        *float64       `json:"max_qty,omitempty"`
+	Status        string         `json:"status"`
 	Attrs         map[string]any `json:"attrs,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+// Item lifecycle states. See migration 026 and FR-ITM-10.
+const (
+	ItemStatusDraft      = "draft"
+	ItemStatusActive     = "active"
+	ItemStatusRestricted = "restricted"
+	ItemStatusObsolete   = "obsolete"
+	ItemStatusBlocked    = "blocked"
+)
+
+// ItemStatuses is the closed set, in lifecycle order.
+var ItemStatuses = []string{
+	ItemStatusDraft, ItemStatusActive, ItemStatusRestricted,
+	ItemStatusObsolete, ItemStatusBlocked,
+}
+
+// ValidItemStatus reports whether s is one of the five lifecycle states.
+func ValidItemStatus(s string) bool {
+	for _, v := range ItemStatuses {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 type StockBalance struct {

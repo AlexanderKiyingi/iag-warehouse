@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,17 +20,43 @@ func (a *API) ListIssues(c *gin.Context) {
 	ok(c, gin.H{"items": items})
 }
 
+// errNoIssueReference is the refusal text for an unreferenced issue. It names
+// all three acceptable fields rather than saying "reference required", because
+// a caller reading it is one field away from a valid request and should not
+// have to read the schema to find out which.
+const errNoIssueReference = "an issue needs a reason: supply cost_center, production_order_ref or work_order_ref " +
+	"(department records who took the stock, not what consumed it)"
+
+// hasIssueReference reports whether an issue names the document that caused it.
+//
+// Department is deliberately not accepted. It answers "who", and an issue that
+// can only answer "who" cannot be costed to an order, reconciled against a
+// backflush, or defended in a variance review — which is the whole reason the
+// reference is mandatory.
+func hasIssueReference(in store.CreateIssueInput) bool {
+	for _, ref := range []*string{in.CostCenter, in.ProductionOrderRef, in.WorkOrderRef} {
+		if ref != nil && strings.TrimSpace(*ref) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *API) CreateIssue(c *gin.Context) {
 	in, createdBy, err := bindIssueInput(c)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
 	}
+	if a.Cfg.IssueRequireReference && !hasIssueReference(in) {
+		badRequest(c, errNoIssueReference)
+		return
+	}
 	in.CreatedBy = createdBy
 	a.withIdempotency(c, func() (int, any) {
 		iss, err := a.Store.CreateIssue(c.Request.Context(), in)
 		if err != nil {
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusCreated, iss
 	})
@@ -45,15 +72,23 @@ func (a *API) IssueForDepartment(c *gin.Context) {
 		badRequest(c, "department is required")
 		return
 	}
+	// This path creates and posts in one call, so an unreferenced issue here
+	// reaches the ledger immediately rather than sitting in draft where somebody
+	// might notice. FR-ISS-14 allows a consumables issue straight to a cost
+	// centre — the cost centre is the reference, and it still has to be named.
+	if a.Cfg.IssueRequireReference && !hasIssueReference(in) {
+		badRequest(c, errNoIssueReference)
+		return
+	}
 	in.CreatedBy = createdBy
 	a.withIdempotency(c, func() (int, any) {
 		iss, err := a.Store.CreateIssue(c.Request.Context(), in)
 		if err != nil {
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		iss, err = a.Store.PostIssue(c.Request.Context(), iss.ID, createdBy)
 		if err != nil {
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusCreated, iss
 	})
@@ -75,7 +110,7 @@ func (a *API) PostIssue(c *gin.Context) {
 			if err == store.ErrInsufficientStock {
 				return http.StatusUnprocessableEntity, gin.H{"error": "insufficient stock"}
 			}
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusOK, iss
 	})
@@ -131,5 +166,9 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 		BatchBusinessID:    strPtr(body.BatchBusinessID),
 		Notes:              strPtr(body.Notes),
 		Lines:              lines,
+		// Resolved here rather than in the store: whether this caller may move a
+		// restricted item is a fact about the request, and the store has no
+		// claims to ask.
+		AllowRestrictedItems: callerHolds(c, PermOverrideItemStatus),
 	}, createdBy, nil
 }

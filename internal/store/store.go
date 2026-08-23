@@ -26,6 +26,9 @@ type Store struct {
 	// (receipt/issue/adjustment). Off → movements carry no cost and finance no-ops.
 	costingEnabled bool
 	baseCurrency   string
+	// itemLifecycle gates receipts and issues on wh_items.status (migration 026).
+	// Off → status is informational, which is how every release before it behaved.
+	itemLifecycle bool
 }
 
 func New(pool *pgxpool.Pool) *Store {

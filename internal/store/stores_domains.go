@@ -125,69 +125,6 @@ func (s *Store) DeleteReturn(ctx context.Context, id uuid.UUID) error {
 	return s.deleteByID(ctx, `DELETE FROM wh_returns WHERE id=$1`, id)
 }
 
-// --- gate passes ------------------------------------------------------------
-
-const gatePassCols = `id, gate_pass_no, items, issued_to, dept, purpose, date_out, return_by, return_date, status, authorized_by, created_at, updated_at`
-
-func scanGatePass(row pgx.Row) (models.GatePass, error) {
-	var g models.GatePass
-	err := row.Scan(&g.ID, &g.GatePassNo, &g.Items, &g.IssuedTo, &g.Dept, &g.Purpose, &g.DateOut, &g.ReturnBy, &g.ReturnDate, &g.Status, &g.AuthorizedBy, &g.CreatedAt, &g.UpdatedAt)
-	return g, err
-}
-
-func (s *Store) ListGatePasses(ctx context.Context) ([]models.GatePass, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+gatePassCols+` FROM wh_gate_passes ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []models.GatePass{}
-	for rows.Next() {
-		g, err := scanGatePass(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, g)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) CreateGatePass(ctx context.Context, g models.GatePass) (models.GatePass, error) {
-	return scanGatePass(s.pool.QueryRow(ctx, `
-		INSERT INTO wh_gate_passes (gate_pass_no, items, issued_to, dept, purpose, date_out, return_by, return_date, status, authorized_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE(NULLIF($9, ''), 'On Loan'), $10)
-		RETURNING `+gatePassCols, g.GatePassNo, g.Items, g.IssuedTo, g.Dept, g.Purpose, g.DateOut, g.ReturnBy, g.ReturnDate, g.Status, g.AuthorizedBy))
-}
-
-func (s *Store) UpdateGatePass(ctx context.Context, id uuid.UUID, g models.GatePass) (models.GatePass, error) {
-	out, err := scanGatePass(s.pool.QueryRow(ctx, `
-		UPDATE wh_gate_passes SET gate_pass_no=COALESCE(NULLIF($2, ''), gate_pass_no), items=COALESCE(NULLIF($3, ''), items),
-			issued_to=COALESCE(NULLIF($4, ''), issued_to), dept=COALESCE(NULLIF($5, ''), dept), purpose=COALESCE(NULLIF($6, ''), purpose),
-			date_out=COALESCE(NULLIF($7, ''), date_out), return_by=COALESCE(NULLIF($8, ''), return_by),
-			return_date=COALESCE(NULLIF($9, ''), return_date), status=COALESCE(NULLIF($10, ''), status),
-			authorized_by=COALESCE(NULLIF($11, ''), authorized_by), updated_at=NOW()
-		WHERE id=$1 RETURNING `+gatePassCols, id, g.GatePassNo, g.Items, g.IssuedTo, g.Dept, g.Purpose, g.DateOut, g.ReturnBy, g.ReturnDate, g.Status, g.AuthorizedBy))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return models.GatePass{}, ErrNotFound
-	}
-	return out, err
-}
-
-// ReturnGatePass marks an outstanding gate pass as returned on the given date.
-func (s *Store) ReturnGatePass(ctx context.Context, id uuid.UUID, returnDate string) (models.GatePass, error) {
-	out, err := scanGatePass(s.pool.QueryRow(ctx, `
-		UPDATE wh_gate_passes SET status='Returned', return_date=$2, updated_at=NOW()
-		WHERE id=$1 RETURNING `+gatePassCols, id, returnDate))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return models.GatePass{}, ErrNotFound
-	}
-	return out, err
-}
-
-func (s *Store) DeleteGatePass(ctx context.Context, id uuid.UUID) error {
-	return s.deleteByID(ctx, `DELETE FROM wh_gate_passes WHERE id=$1`, id)
-}
-
 // --- warranties -------------------------------------------------------------
 
 const warrantyCols = `id, item, supplier, asset_ref, purchase_date, expiry_date, duration, covers, contact, status, created_at, updated_at`
