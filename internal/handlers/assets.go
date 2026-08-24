@@ -239,14 +239,11 @@ func (a *API) notifyDisposalDecision(c *gin.Context, d models.AssetDisposal, pro
 
 	if approved && prog != nil && !prog.Complete {
 		desk := events.DefaultNotifyRecipient()
-		if desk == "" {
-			return
-		}
 		tier := ""
 		if prog.NextTier != nil {
 			tier = " tier " + strconv.Itoa(*prog.NextTier)
 		}
-		a.Bus.PublishAlert(ctx, "", desk, "approval.pending", map[string]string{
+		a.Bus.PublishAlertTo(ctx, "", "approvals.warehouse", desk, "approval.pending", map[string]string{
 			"Title": "Disposal awaiting" + tier + ": " + d.AssetTag,
 			"Body": what + " requested by " + d.RequestedBy + " has cleared " +
 				strconv.Itoa(len(prog.ApprovedTiers)) + " of " + strconv.Itoa(len(prog.RequiredTiers)) +
@@ -255,15 +252,21 @@ func (a *API) notifyDisposalDecision(c *gin.Context, d models.AssetDisposal, pro
 		return
 	}
 
+	// The requester is a specific person, so this decision carries NO audience:
+	// an audience resolves to whoever an admin has put on the warehouse desk,
+	// which would redirect a personal notification away from the person it is
+	// about. Only the desk fallback is routable.
 	recipient := strings.TrimSpace(d.RequestedBy)
+	audience := ""
 	if recipient == "" {
 		recipient = events.DefaultNotifyRecipient()
+		audience = "approvals.warehouse"
 	}
 	outcome := "rejected"
 	if approved {
 		outcome = "approved"
 	}
-	a.Bus.PublishAlert(ctx, "", recipient, "approval.decision", map[string]string{
+	a.Bus.PublishAlertTo(ctx, "", audience, recipient, "approval.decision", map[string]string{
 		"Title": "Disposal " + outcome + ": " + d.AssetTag,
 		"Body":  what + " was " + outcome + ".",
 	}, d.ID.String())

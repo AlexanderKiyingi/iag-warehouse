@@ -232,10 +232,10 @@ func (a *API) notifySlipDecision(c *gin.Context, slip models.Slip, outcome, reas
 	if a.Bus == nil || !a.Bus.Enabled() {
 		return
 	}
+	// The audience carries the destination; the env desk is only the fallback
+	// used until an administrator routes it, so an empty one is not a reason
+	// to drop the notification any more.
 	desk := events.DefaultNotifyRecipient()
-	if desk == "" {
-		return
-	}
 	ref := slip.ID.String()
 	if slip.SlipNo != nil && strings.TrimSpace(*slip.SlipNo) != "" {
 		ref = strings.TrimSpace(*slip.SlipNo)
@@ -244,7 +244,7 @@ func (a *API) notifySlipDecision(c *gin.Context, slip models.Slip, outcome, reas
 	if strings.TrimSpace(reason) != "" {
 		body += " Reason: " + reason
 	}
-	a.Bus.PublishAlert(c.Request.Context(), "", desk, "approval.decision", map[string]string{
+	a.Bus.PublishAlertTo(c.Request.Context(), "", "approvals.warehouse", desk, "approval.decision", map[string]string{
 		"Title": "Slip " + outcome + ": " + ref,
 		"Body":  body,
 	}, slip.ID.String())

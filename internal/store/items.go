@@ -15,11 +15,11 @@ func (s *Store) ListItems(ctx context.Context, materialClass string) ([]models.I
 	var err error
 	if materialClass != "" {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at
+			SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at
 			FROM wh_items WHERE material_class = $1 ORDER BY sku`, materialClass)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at
+			SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at
 			FROM wh_items ORDER BY sku`)
 	}
 	if err != nil {
@@ -34,18 +34,18 @@ func (s *Store) CreateItem(ctx context.Context, sku, name, materialClass, tracki
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO wh_items (sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at`,
+		RETURNING id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at`,
 		sku, name, materialClass, trackingMode, uom, minQty, maxQty, attrsOrEmpty(attrs),
-	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
 func (s *Store) GetItemBySKU(ctx context.Context, sku string) (models.Item, error) {
 	var item models.Item
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at
+		SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at
 		FROM wh_items WHERE sku = $1`, sku,
-	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -64,9 +64,9 @@ func (s *Store) GetItemIDBySKU(ctx context.Context, sku string) (uuid.UUID, erro
 func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (models.Item, error) {
 	var item models.Item
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at
+		SELECT id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at
 		FROM wh_items WHERE id = $1`, id,
-	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrNotFound
 	}
@@ -93,9 +93,9 @@ func (s *Store) UpdateItem(ctx context.Context, id uuid.UUID, name *string, minQ
 	err = s.pool.QueryRow(ctx, `
 		UPDATE wh_items SET name = $2, min_qty = $3, max_qty = $4, attrs = $5, updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, attrs, created_at, updated_at`,
+		RETURNING id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at`,
 		id, item.Name, item.MinQty, item.MaxQty, item.Attrs,
-	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -127,7 +127,7 @@ func scanItems(rows pgx.Rows) ([]models.Item, error) {
 	var out []models.Item
 	for rows.Next() {
 		var item models.Item
-		if err := rows.Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Attrs, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

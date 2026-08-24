@@ -37,6 +37,9 @@ type CreateReceiptInput struct {
 	FacilityID *uuid.UUID
 	Lines      []ReceiptLineInput
 	CreatedBy  *uuid.UUID
+	// AllowRestrictedItems lifts the `restricted` item status for a caller
+	// holding warehouse.override_item_status. See CreateIssueInput.
+	AllowRestrictedItems bool
 }
 
 // receiptReadCols selects a receipt plus its computed monetary value (Σ of the
@@ -58,6 +61,17 @@ func (s *Store) CreateReceipt(ctx context.Context, in CreateReceiptInput) (model
 		return models.Receipt{}, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Refuse the delivery before a receipt header exists. Obsolete is the status
+	// that earns its keep here: it is how you stop buying a superseded part
+	// without stranding the stock still on the shelf.
+	itemIDs := make([]uuid.UUID, 0, len(in.Lines))
+	for _, line := range in.Lines {
+		itemIDs = append(itemIDs, line.ItemID)
+	}
+	if err := s.assertItemsTransactable(ctx, tx, itemIDs, ItemActionReceive, in.AllowRestrictedItems, in.CreatedBy); err != nil {
+		return models.Receipt{}, err
+	}
 
 	var receipt models.Receipt
 	err = tx.QueryRow(ctx, `

@@ -219,8 +219,9 @@ func (a *API) ApproveCountTask(c *gin.Context) {
 	// warehouse holds no user directory — so the ops desk is the recipient.
 	// Approving a count posts stock adjustments, which is worth a record.
 	if a.Bus != nil && a.Bus.Enabled() {
-		if desk := events.DefaultNotifyRecipient(); desk != "" {
-			a.Bus.PublishAlert(c.Request.Context(), "", desk, "approval.decision", map[string]string{
+		{
+			desk := events.DefaultNotifyRecipient()
+			a.Bus.PublishAlertTo(c.Request.Context(), "", "approvals.warehouse", desk, "approval.decision", map[string]string{
 				"Title": "Stock count approved: " + task.Code,
 				"Body": "Count task " + task.Code + " was approved; its variances have been posted as stock adjustments.",
 			}, task.ID.String())

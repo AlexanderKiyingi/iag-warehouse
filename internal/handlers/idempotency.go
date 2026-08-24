@@ -88,6 +88,12 @@ func statusForStoreErr(err error) int {
 	case errors.Is(err, store.ErrInsufficientStock), errors.Is(err, store.ErrStockNotAvailable):
 		return http.StatusUnprocessableEntity
 	default:
+		// A lifecycle refusal is a well-formed request about stock that may not
+		// move — the same shape as insufficient stock, not a malformed payload.
+		var statusErr *store.ItemStatusError
+		if errors.As(err, &statusErr) {
+			return http.StatusUnprocessableEntity
+		}
 		return http.StatusInternalServerError
 	}
 }

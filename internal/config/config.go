@@ -66,6 +66,25 @@ type Config struct {
 	// one who authorises it. Defaults ON. Set via
 	// WAREHOUSE_SLIP_REQUIRE_SEPARATE_AUTHORIZER=false.
 	SlipRequireSeparateAuthorizer bool
+	// IssueRequireReference enforces the rule that no stock moves without a
+	// document behind it: an issue must name a cost centre, a production order
+	// or a work order. A department is who took it, not why, and on its own it
+	// leaves the movement unattributable — usage variance, shrinkage and work
+	// order costing all reduce to guesswork once anonymous issues are in the
+	// ledger. Defaults ON. Set via WAREHOUSE_ISSUE_REQUIRE_REFERENCE=false.
+	//
+	// Turning it off is a deliberate choice to accept unattributable stock
+	// movement; the refusal names the three fields, so a caller that hits it is
+	// one field away from compliance rather than blocked.
+	IssueRequireReference bool
+	// ItemLifecycleEnforced makes wh_items.status mean something: a draft item
+	// cannot be transacted at all, a restricted one cannot be received or
+	// issued without the override permission, and an obsolete or blocked one is
+	// refused outright. Defaults ON once the column exists — an install that has
+	// not curated its item statuses can set
+	// WAREHOUSE_ITEM_LIFECYCLE_ENFORCED=false, but every item defaults to
+	// 'active' on migration, so the honest default is on.
+	ItemLifecycleEnforced bool
 	// OrgName is printed at the head of gate passes and handover slips.
 	OrgName string
 }
@@ -114,6 +133,8 @@ func Load() (*Config, error) {
 		// an explicit "false", never by an unset variable.
 		CountRequireSeparateApprover:  !strings.EqualFold(os.Getenv("WAREHOUSE_COUNT_REQUIRE_SEPARATE_APPROVER"), "false"),
 		SlipRequireSeparateAuthorizer: !strings.EqualFold(os.Getenv("WAREHOUSE_SLIP_REQUIRE_SEPARATE_AUTHORIZER"), "false"),
+		IssueRequireReference:         !strings.EqualFold(os.Getenv("WAREHOUSE_ISSUE_REQUIRE_REFERENCE"), "false"),
+		ItemLifecycleEnforced:         !strings.EqualFold(os.Getenv("WAREHOUSE_ITEM_LIFECYCLE_ENFORCED"), "false"),
 		OrgName:                       getenv("WAREHOUSE_ORG_NAME", "Inspire Africa Group"),
 	}
 

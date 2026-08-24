@@ -14,6 +14,8 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{"warehouse.view_item", "View item master"},
 		{"warehouse.add_item", "Create items"},
 		{"warehouse.change_item", "Update items"},
+		{"warehouse.change_item_status", "Move an item through its lifecycle (draft/active/restricted/obsolete/blocked)"},
+		{"warehouse.override_item_status", "Transact a restricted item; does not lift draft or blocked"},
 		{"warehouse.view_stock", "View balances and low stock"},
 		{"warehouse.view_receipt", "View receipts"},
 		{"warehouse.add_receipt", "Create receipts"},

@@ -72,6 +72,8 @@ func (a *API) CreateReceipt(c *gin.Context) {
 			FacilityID:  facilityID,
 			Lines:       lines,
 			CreatedBy:   createdBy,
+
+			AllowRestrictedItems: callerHolds(c, PermOverrideItemStatus),
 		})
 		if err != nil {
 			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
@@ -102,7 +104,7 @@ func (a *API) CreateReceiptFromGRN(c *gin.Context) {
 	a.withIdempotency(c, func() (int, any) {
 		r, err := a.Store.CreateReceiptFromGRN(c.Request.Context(), body.GRNID, body.POID, lines, createdBy)
 		if err != nil {
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusCreated, r
 	})
@@ -127,7 +129,7 @@ func (a *API) PostReceipt(c *gin.Context) {
 			if err == store.ErrInsufficientStock {
 				return http.StatusUnprocessableEntity, gin.H{"error": "insufficient stock"}
 			}
-			return http.StatusInternalServerError, gin.H{"error": err.Error()}
+			return statusForStoreErr(err), gin.H{"error": messageForStoreErr(err)}
 		}
 		return http.StatusOK, r
 	})
