@@ -193,10 +193,19 @@ func (b *Bus) publishDirect(ctx context.Context, evt PlatformEvent, key string) 
 // notifications policy consumer, using the shared
 // {channel,recipient,templateId,variables} envelope.
 func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
+	b.PublishAlertTo(ctx, channel, "", recipient, templateID, variables, key)
+}
+
+// PublishAlertTo addresses a logical audience ("approvals.warehouse") whose
+// recipients an administrator maintains centrally, falling back to recipient
+// until that audience is routed. Prefer it wherever the destination is a desk
+// rather than a specific person: changing who is on the desk then stops being
+// a redeploy of this service.
+func (b *Bus) PublishAlertTo(ctx context.Context, channel, audience, recipient, templateID string, variables map[string]string, key string) {
 	if b == nil || !b.enabled || templateID == "" {
 		return
 	}
-	if recipient == "" {
+	if recipient == "" && audience == "" {
 		warnNoNotifyRecipient()
 		return
 	}
@@ -207,12 +216,16 @@ func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID s
 	if channel == "" {
 		channel = defaultNotifyChannel()
 	}
-	b.Publish(ctx, TypeAlertRaised, map[string]any{
+	data := map[string]any{
 		"channel":    channel,
 		"recipient":  recipient,
 		"templateId": templateID,
 		"variables":  vars,
-	}, key)
+	}
+	if audience != "" {
+		data["audience"] = audience
+	}
+	b.Publish(ctx, TypeAlertRaised, data, key)
 }
 
 func ParseBrokers(raw string) []string {
