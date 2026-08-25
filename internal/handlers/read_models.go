@@ -236,3 +236,31 @@ func (a *API) DeleteSpareCompat(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// ListReservations backs GET /api/v1/reservations — stock allocated to open
+// picks. See store.ListReservations for why this is a projection over pick
+// lines rather than a read of wh_stock_balances.reserved.
+func (a *API) ListReservations(c *gin.Context) {
+	var itemID *uuid.UUID
+	if raw := c.Query("item_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			badRequest(c, "invalid item_id")
+			return
+		}
+		itemID = &id
+	}
+	items, err := a.Store.ListReservations(
+		c.Request.Context(),
+		c.Query("status"),
+		c.Query("order_ref"),
+		itemID,
+		c.Query("facility"),
+		200,
+	)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}

@@ -151,6 +151,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.DELETE("/small-tools/:id", appmw.RequirePermission("warehouse.change_tool"), api.DeleteSmallTool)
 
 		v1.GET("/movements", appmw.RequirePermission("warehouse.view_stock"), api.ListMovements)
+		// Stock held by open picks. Gated on view_stock rather than a new
+		// codename: it exposes nothing a caller who can read balances and pick
+		// lists could not already assemble, and a fresh permission nobody
+		// holds would make the route unreachable on day one.
+		v1.GET("/reservations", appmw.RequirePermission("warehouse.view_stock"), api.ListReservations)
 		v1.GET("/pick-lists", appmw.RequirePermission("warehouse.view_stock"), api.ListPickLists)
 		v1.GET("/pick-lists/:id", appmw.RequirePermission("warehouse.view_stock"), api.GetPickList)
 		v1.POST("/pick-lists", appmw.RequirePermission("warehouse.add_pick"), api.CreatePickList)
@@ -159,6 +164,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/pack-sessions", appmw.RequirePermission("warehouse.view_pack"), api.ListPackSessions)
 		v1.GET("/pack-sessions/:id", appmw.RequirePermission("warehouse.view_pack"), api.GetPackSession)
 		v1.POST("/pack-sessions", appmw.RequirePermission("warehouse.add_pack"), api.CreatePackSession)
+		v1.PATCH("/pack-sessions/:id", appmw.RequirePermission("warehouse.add_pack"), api.UpdatePackSession)
 
 		// --- execution layer -------------------------------------------------
 		// Unit-of-measure conversions. Reachable by peer services because a

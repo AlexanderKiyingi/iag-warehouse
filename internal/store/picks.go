@@ -433,6 +433,42 @@ func (s *Store) GetPackSession(ctx context.Context, id uuid.UUID) (models.PackSe
 	return p, err
 }
 
+// UpdatePackSession sets the status and/or replaces the attrs bag.
+//
+// attrs is replaced rather than merged, deliberately: a merge cannot express
+// removal, so a packer clearing a wrong packaging type would find it silently
+// preserved. Callers send the whole bag, which is what the read returns.
+func (s *Store) UpdatePackSession(
+	ctx context.Context,
+	id uuid.UUID,
+	status *string,
+	attrs map[string]any,
+) (models.PackSession, error) {
+	var p models.PackSession
+	err := s.pool.QueryRow(ctx, `
+		UPDATE wh_pack_sessions
+		SET status = COALESCE($2, status),
+			attrs  = COALESCE($3, attrs)
+		WHERE id = $1
+		RETURNING id, pick_list_id, status, attrs, created_by, created_at`,
+		id, status, attrsOrNil(attrs),
+	).Scan(&p.ID, &p.PickListID, &p.Status, &p.Attrs, &p.CreatedBy, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+// attrsOrNil keeps an omitted attrs key distinct from an explicit empty one.
+// attrsOrEmpty would coerce "don't touch attrs" into "wipe attrs", which on an
+// UPDATE is data loss rather than a default.
+func attrsOrNil(attrs map[string]any) any {
+	if attrs == nil {
+		return nil
+	}
+	return attrsOrEmpty(attrs)
+}
+
 func (s *Store) HandleDispatchCreated(ctx context.Context, dispatchID, orderRef string) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id FROM wh_pick_lists WHERE order_ref = $1 AND status = 'open' LIMIT 1`, orderRef)

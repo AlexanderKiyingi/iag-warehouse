@@ -365,3 +365,36 @@ func RawJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// StockReservation is a read model over the reservation system, not a table.
+//
+// Reserved stock is a `reserved` column on wh_stock_balances (migration
+// 005_reservations.sql) — a single running total per item/bin, with no record
+// of who holds it. The holder is the open pick list: a pick reserves at
+// creation, consumes on confirm and releases on cancel, so an open pick line
+// *is* one allocation of stock to one order.
+//
+// This projects that relationship into the collection the balance column
+// cannot provide: which item, how much, out of which bin, against which order.
+type StockReservation struct {
+	// ID is the pick line, which is what makes an allocation unique.
+	ID           uuid.UUID `json:"id"`
+	PickListID   uuid.UUID `json:"pick_list_id"`
+	OrderRef     *string   `json:"order_ref,omitempty"`
+	Status       string    `json:"status"`
+	ItemID       uuid.UUID `json:"item_id"`
+	SKU          string    `json:"sku"`
+	ItemName     string    `json:"item_name"`
+	UOM          string    `json:"uom"`
+	// Qty is the amount the pick line claimed; PickedQty is how much has
+	// actually been taken. ReservedQty is the remainder still held against
+	// available stock, which is the number a planner needs.
+	Qty          float64   `json:"qty"`
+	PickedQty    float64   `json:"picked_qty"`
+	ReservedQty  float64   `json:"reserved_qty"`
+	LotKey       string    `json:"lot_key"`
+	BinCode      string    `json:"bin_code"`
+	FacilityCode string    `json:"facility_code"`
+	FacilityName string    `json:"facility_name"`
+	CreatedAt    time.Time `json:"created_at"`
+}

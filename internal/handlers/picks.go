@@ -127,3 +127,30 @@ func (a *API) CreatePackSession(c *gin.Context) {
 		return http.StatusCreated, gin.H{"id": id}
 	})
 }
+
+// UpdatePackSession backs PATCH /api/v1/pack-sessions/:id.
+//
+// A pack session was create-and-forget: an operator could open one and then
+// had no way to mark it packed or correct the packaging recorded on it, so the
+// status column never moved off 'open' in practice.
+func (a *API) UpdatePackSession(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		badRequest(c, "invalid pack session id")
+		return
+	}
+	var body struct {
+		Status *string        `json:"status"`
+		Attrs  map[string]any `json:"attrs"`
+	}
+	if err := bindJSONCoerced(c, &body); err != nil {
+		badRequest(c, "invalid JSON")
+		return
+	}
+	row, err := a.Store.UpdatePackSession(c.Request.Context(), id, body.Status, body.Attrs)
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, row)
+}
