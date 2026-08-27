@@ -22,17 +22,17 @@ const (
 	Source      = "iag.warehouse"
 	TopicOps    = "iag.operations"
 
-	TypeReceiptPosted       = "warehouse.receipt.posted"
-	TypeIssuePosted         = "warehouse.issue.posted"
-	TypeTransferCompleted   = "warehouse.transfer.completed"
-	TypeProductionConsumed  = "warehouse.production.consumed"
-	TypeProductionOutput    = "warehouse.production.output"
-	TypePickConfirmed       = "warehouse.pick.confirmed"
-	TypeAssetCheckedOut     = "warehouse.asset.checked_out"
-	TypeAssetDisposed       = "warehouse.asset.disposed"
-	TypeStockBelowMinimum   = "warehouse.stock.below_minimum"
-	TypeMovementPosted      = "warehouse.movement.posted"
-	TypeAlertRaised         = "warehouse.alert.raised"
+	TypeReceiptPosted      = "warehouse.receipt.posted"
+	TypeIssuePosted        = "warehouse.issue.posted"
+	TypeTransferCompleted  = "warehouse.transfer.completed"
+	TypeProductionConsumed = "warehouse.production.consumed"
+	TypeProductionOutput   = "warehouse.production.output"
+	TypePickConfirmed      = "warehouse.pick.confirmed"
+	TypeAssetCheckedOut    = "warehouse.asset.checked_out"
+	TypeAssetDisposed      = "warehouse.asset.disposed"
+	TypeStockBelowMinimum  = "warehouse.stock.below_minimum"
+	TypeMovementPosted     = "warehouse.movement.posted"
+	TypeAlertRaised        = "warehouse.alert.raised"
 
 	// Execution layer.
 	TypeCountApproved = "warehouse.count.approved"
@@ -178,8 +178,11 @@ func (b *Bus) publishDirect(ctx context.Context, evt PlatformEvent, key string) 
 	if key == "" {
 		key = evt.ID
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return b.writer.WriteMessages(ctx, kafka.Message{
-		Topic: TopicOps,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
