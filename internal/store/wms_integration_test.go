@@ -72,7 +72,11 @@ type fixture struct {
 func newFixture(t *testing.T, s *Store, ctx context.Context) fixture {
 	t.Helper()
 	sfx := uuid.NewString()[:8]
-	f, err := s.CreateFacility(ctx, "FAC-"+sfx, "Test Mill "+sfx, "mill", nil)
+	f, err := s.CreateFacility(ctx, CreateFacilityInput{
+		Code:     "FAC-" + sfx,
+		Name:     "Test Mill " + sfx,
+		SiteType: "mill",
+	})
 	if err != nil {
 		t.Fatalf("facility: %v", err)
 	}

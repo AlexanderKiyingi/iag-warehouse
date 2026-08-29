@@ -73,6 +73,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// description, so it is a different permission on a different route.
 		v1.PATCH("/items/:id/status", appmw.RequirePermission("warehouse.change_item_status"), api.SetItemStatus)
 		v1.GET("/items/:id/balances", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.ItemBalances)
+		// Bulk companion to the per-item balances above: one row per item, so a
+		// list screen can show quantity on hand without a call per row.
+		v1.GET("/stock/summary", appmw.RequireServiceOrPermission("warehouse.view_stock"), api.ItemStockSummary)
 
 		v1.GET("/receipts", appmw.RequirePermission("warehouse.view_receipt"), api.ListReceipts)
 		v1.GET("/receipts/:id", appmw.RequirePermission("warehouse.view_receipt"), api.GetReceipt)

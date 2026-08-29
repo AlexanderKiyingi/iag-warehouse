@@ -2,8 +2,12 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"iag-warehouse/backend/internal/models"
+	"iag-warehouse/backend/internal/store"
 )
 
 func (a *API) ListFacilities(c *gin.Context) {
@@ -20,14 +24,27 @@ func (a *API) CreateFacility(c *gin.Context) {
 		Code     string         `json:"code"`
 		Name     string         `json:"name"`
 		SiteType string         `json:"site_type"`
+		Address  string         `json:"address"`
+		Status   string         `json:"status"`
 		Attrs    map[string]any `json:"attrs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.Code == "" || body.Name == "" || body.SiteType == "" {
 		badRequest(c, "code, name, and site_type are required")
 		return
 	}
+	if body.Status != "" && !models.ValidFacilityStatus(body.Status) {
+		badRequest(c, "status must be one of: "+strings.Join(models.FacilityStatuses, ", "))
+		return
+	}
 	a.withIdempotency(c, func() (int, any) {
-		f, err := a.Store.CreateFacility(c.Request.Context(), body.Code, body.Name, body.SiteType, body.Attrs)
+		f, err := a.Store.CreateFacility(c.Request.Context(), store.CreateFacilityInput{
+			Code:     body.Code,
+			Name:     body.Name,
+			SiteType: body.SiteType,
+			Address:  body.Address,
+			Status:   body.Status,
+			Attrs:    body.Attrs,
+		})
 		if err != nil {
 			return http.StatusInternalServerError, gin.H{"error": err.Error()}
 		}
@@ -48,13 +65,19 @@ func (a *API) PatchFacility(c *gin.Context) {
 	var body struct {
 		Name     *string        `json:"name"`
 		SiteType *string        `json:"site_type"`
+		Address  *string        `json:"address"`
+		Status   *string        `json:"status"`
 		Attrs    map[string]any `json:"attrs"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		badRequest(c, "invalid JSON")
 		return
 	}
-	f, err := a.Store.UpdateFacility(c.Request.Context(), c.Param("code"), body.Name, body.SiteType, body.Attrs)
+	if body.Status != nil && !models.ValidFacilityStatus(*body.Status) {
+		badRequest(c, "status must be one of: "+strings.Join(models.FacilityStatuses, ", "))
+		return
+	}
+	f, err := a.Store.UpdateFacility(c.Request.Context(), c.Param("code"), body.Name, body.SiteType, body.Address, body.Status, body.Attrs)
 	if err != nil {
 		storeErr(c, err)
 		return

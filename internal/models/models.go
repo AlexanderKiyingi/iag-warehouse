@@ -42,11 +42,34 @@ const (
 	MovementPick              = "pick"
 )
 
+// Facility site states. A site is either open for business or it is not; there
+// is no lifecycle here worth more than two values, and inventing one would
+// invite readers to treat some third state as "sort of open".
+const (
+	FacilityActive   = "active"
+	FacilityInactive = "inactive"
+)
+
+var FacilityStatuses = []string{FacilityActive, FacilityInactive}
+
+func ValidFacilityStatus(s string) bool {
+	for _, v := range FacilityStatuses {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 type Facility struct {
-	ID        uuid.UUID      `json:"id"`
-	Code      string         `json:"code"`
-	Name      string         `json:"name"`
-	SiteType  string         `json:"site_type"`
+	ID       uuid.UUID `json:"id"`
+	Code     string    `json:"code"`
+	Name     string    `json:"name"`
+	SiteType string    `json:"site_type"`
+	// Address and Status arrived with migration 033. Until then clients
+	// collected both and the service stored neither.
+	Address   string         `json:"address"`
+	Status    string         `json:"status"`
 	Attrs     map[string]any `json:"attrs,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
@@ -90,6 +113,21 @@ type Item struct {
 	UpdatedAt     time.Time      `json:"updated_at"`
 }
 
+// MaterialClasses and TrackingModes mirror the CHECK constraints on wh_items
+// in migration 001. They exist so a handler can reject a bad value with the
+// permitted set named in the message, rather than letting Postgres answer with
+// a constraint violation the caller cannot act on — and so a client can offer
+// the right choices instead of guessing at a free-text field.
+var (
+	MaterialClasses = []string{
+		MaterialRawMaterial, MaterialFinishedGood, MaterialConsumable,
+		MaterialSparePart, MaterialEquipment,
+	}
+	TrackingModes = []string{
+		TrackingBulk, TrackingLot, TrackingSKU, TrackingSerial,
+	}
+)
+
 // Item lifecycle states. See migration 026 and FR-ITM-10.
 const (
 	ItemStatusDraft      = "draft"
@@ -113,6 +151,27 @@ func ValidItemStatus(s string) bool {
 		}
 	}
 	return false
+}
+
+// ItemStockSummary is one row per item, aggregated across every bin holding it.
+//
+// StockBalance answers "where is this item"; this answers "how much of it is
+// there". A list screen needs the second and would otherwise have to ask the
+// first once per row.
+//
+// UpdatedAt is nullable on purpose: an item that has never been stocked has no
+// balance row and therefore no last-movement time, and reporting the zero time
+// would read as 1 January year 1 in every client that formats it.
+type ItemStockSummary struct {
+	ItemID    uuid.UUID  `json:"item_id"`
+	SKU       string     `json:"sku"`
+	Name      string     `json:"name"`
+	UOM       string     `json:"uom"`
+	Qty       float64    `json:"qty"`
+	Reserved  float64    `json:"reserved"`
+	Available float64    `json:"available"`
+	BinCount  int        `json:"bin_count"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 type StockBalance struct {

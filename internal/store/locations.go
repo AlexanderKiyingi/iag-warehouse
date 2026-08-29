@@ -12,7 +12,7 @@ import (
 
 func (s *Store) ListFacilities(ctx context.Context) ([]models.Facility, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, code, name, site_type, attrs, created_at, updated_at
+		SELECT id, code, name, site_type, address, status, attrs, created_at, updated_at
 		FROM wh_facilities ORDER BY code`)
 	if err != nil {
 		return nil, err
@@ -21,30 +21,45 @@ func (s *Store) ListFacilities(ctx context.Context) ([]models.Facility, error) {
 	return scanFacilities(rows)
 }
 
-func (s *Store) CreateFacility(ctx context.Context, code, name, siteType string, attrs map[string]any) (models.Facility, error) {
+func (s *Store) CreateFacility(ctx context.Context, in CreateFacilityInput) (models.Facility, error) {
+	if in.Status == "" {
+		in.Status = models.FacilityActive
+	}
 	var f models.Facility
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO wh_facilities (code, name, site_type, attrs)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, code, name, site_type, attrs, created_at, updated_at`,
-		code, name, siteType, attrsOrEmpty(attrs),
-	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
+		INSERT INTO wh_facilities (code, name, site_type, address, status, attrs)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, code, name, site_type, address, status, attrs, created_at, updated_at`,
+		in.Code, in.Name, in.SiteType, in.Address, in.Status, attrsOrEmpty(in.Attrs),
+	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Address, &f.Status, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
 	return f, err
+}
+
+// CreateFacilityInput carries the site's own properties. Address and status
+// arrived with migration 033; before that a client could type both and see
+// neither stored.
+type CreateFacilityInput struct {
+	Code     string
+	Name     string
+	SiteType string
+	Address  string
+	Status   string
+	Attrs    map[string]any
 }
 
 func (s *Store) GetFacilityByCode(ctx context.Context, code string) (models.Facility, error) {
 	var f models.Facility
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, code, name, site_type, attrs, created_at, updated_at
+		SELECT id, code, name, site_type, address, status, attrs, created_at, updated_at
 		FROM wh_facilities WHERE code = $1`, code,
-	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
+	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Address, &f.Status, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return f, ErrNotFound
 	}
 	return f, err
 }
 
-func (s *Store) UpdateFacility(ctx context.Context, code string, name, siteType *string, attrs map[string]any) (models.Facility, error) {
+func (s *Store) UpdateFacility(ctx context.Context, code string, name, siteType, address, status *string, attrs map[string]any) (models.Facility, error) {
 	f, err := s.GetFacilityByCode(ctx, code)
 	if err != nil {
 		return f, err
@@ -55,15 +70,22 @@ func (s *Store) UpdateFacility(ctx context.Context, code string, name, siteType 
 	if siteType != nil {
 		f.SiteType = *siteType
 	}
+	if address != nil {
+		f.Address = *address
+	}
+	if status != nil {
+		f.Status = *status
+	}
 	if attrs != nil {
 		f.Attrs = attrs
 	}
 	err = s.pool.QueryRow(ctx, `
-		UPDATE wh_facilities SET name = $2, site_type = $3, attrs = $4, updated_at = NOW()
+		UPDATE wh_facilities
+		SET name = $2, site_type = $3, address = $4, status = $5, attrs = $6, updated_at = NOW()
 		WHERE code = $1
-		RETURNING id, code, name, site_type, attrs, created_at, updated_at`,
-		code, f.Name, f.SiteType, f.Attrs,
-	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
+		RETURNING id, code, name, site_type, address, status, attrs, created_at, updated_at`,
+		code, f.Name, f.SiteType, f.Address, f.Status, f.Attrs,
+	).Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Address, &f.Status, &f.Attrs, &f.CreatedAt, &f.UpdatedAt)
 	return f, err
 }
 
@@ -236,7 +258,7 @@ func scanFacilities(rows pgx.Rows) ([]models.Facility, error) {
 	var out []models.Facility
 	for rows.Next() {
 		var f models.Facility
-		if err := rows.Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Attrs, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Code, &f.Name, &f.SiteType, &f.Address, &f.Status, &f.Attrs, &f.CreatedAt, &f.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, f)

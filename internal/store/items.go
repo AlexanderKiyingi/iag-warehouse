@@ -73,29 +73,67 @@ func (s *Store) GetItem(ctx context.Context, id uuid.UUID) (models.Item, error) 
 	return item, err
 }
 
-func (s *Store) UpdateItem(ctx context.Context, id uuid.UUID, name *string, minQty *float64, maxQty *float64, attrs map[string]any) (models.Item, error) {
+// UpdateItemInput is a patch: every nil field is left as it is.
+//
+// Attrs is replace-not-merge, matching the previous behaviour. A caller that
+// wants to keep existing keys reads the item first and sends the union — which
+// is what a form does anyway, since it renders the stored values.
+type UpdateItemInput struct {
+	Name          *string
+	SKU           *string
+	UOM           *string
+	MaterialClass *string
+	TrackingMode  *string
+	MinQty        *float64
+	MaxQty        *float64
+	Attrs         map[string]any
+}
+
+// ErrDuplicateSKU is a unique-violation on wh_items.sku, which migration 032
+// made unique. It is a caller conflict, not a server failure.
+var ErrDuplicateSKU = errors.New("duplicate sku")
+
+func (s *Store) UpdateItem(ctx context.Context, id uuid.UUID, in UpdateItemInput) (models.Item, error) {
 	item, err := s.GetItem(ctx, id)
 	if err != nil {
 		return item, err
 	}
-	if name != nil {
-		item.Name = *name
+	if in.Name != nil {
+		item.Name = *in.Name
 	}
-	if minQty != nil {
-		item.MinQty = *minQty
+	if in.SKU != nil {
+		item.SKU = *in.SKU
 	}
-	if maxQty != nil {
-		item.MaxQty = maxQty
+	if in.UOM != nil {
+		item.UOM = *in.UOM
 	}
-	if attrs != nil {
-		item.Attrs = attrs
+	if in.MaterialClass != nil {
+		item.MaterialClass = *in.MaterialClass
+	}
+	if in.TrackingMode != nil {
+		item.TrackingMode = *in.TrackingMode
+	}
+	if in.MinQty != nil {
+		item.MinQty = *in.MinQty
+	}
+	if in.MaxQty != nil {
+		item.MaxQty = in.MaxQty
+	}
+	if in.Attrs != nil {
+		item.Attrs = in.Attrs
 	}
 	err = s.pool.QueryRow(ctx, `
-		UPDATE wh_items SET name = $2, min_qty = $3, max_qty = $4, attrs = $5, updated_at = NOW()
+		UPDATE wh_items
+		SET name = $2, sku = $3, uom = $4, material_class = $5, tracking_mode = $6,
+		    min_qty = $7, max_qty = $8, attrs = $9, updated_at = NOW()
 		WHERE id = $1
 		RETURNING id, sku, name, material_class, tracking_mode, uom, min_qty, max_qty, status, attrs, created_at, updated_at`,
-		id, item.Name, item.MinQty, item.MaxQty, item.Attrs,
+		id, item.Name, item.SKU, item.UOM, item.MaterialClass, item.TrackingMode,
+		item.MinQty, item.MaxQty, item.Attrs,
 	).Scan(&item.ID, &item.SKU, &item.Name, &item.MaterialClass, &item.TrackingMode, &item.UOM, &item.MinQty, &item.MaxQty, &item.Status, &item.Attrs, &item.CreatedAt, &item.UpdatedAt)
+	if isUniqueViolation(err) {
+		return item, ErrDuplicateSKU
+	}
 	return item, err
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -42,7 +43,16 @@ func (a *API) CreateReceipt(c *gin.Context) {
 	if body.ReceiptType == "" {
 		body.ReceiptType = "standard"
 	}
-	lines, err := receiptLinesFromBody(body.Lines)
+	// A receipt with no lines received nothing. It used to be accepted, which
+	// meant a client could "successfully" record a delivery that moved no stock
+	// and left no way to add the lines afterwards — there is no add-line verb, so
+	// such a receipt could never become real. A refused receipt is recoverable;
+	// a phantom one is not.
+	if len(body.Lines) == 0 {
+		badRequest(c, "at least one line is required — a receipt with no lines receives no stock")
+		return
+	}
+	lines, err := a.receiptLinesFromBody(c.Request.Context(), body.Lines)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -88,11 +98,11 @@ func (a *API) CreateReceiptFromGRN(c *gin.Context) {
 		POID  string            `json:"po_id"`
 		Lines []receiptLineBody `json:"lines"`
 	}
-	if err := bindJSONCoerced(c, &body); err != nil || body.GRNID == "" {
+	if err := bindJSONCoerced(c, &body); err != nil || body.GRNID == "" || len(body.Lines) == 0 {
 		badRequest(c, "grn_id and lines are required")
 		return
 	}
-	lines, err := receiptLinesFromBody(body.Lines)
+	lines, err := a.receiptLinesFromBody(c.Request.Context(), body.Lines)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -137,6 +147,7 @@ func (a *API) PostReceipt(c *gin.Context) {
 
 type receiptLineBody struct {
 	ItemID          string  `json:"item_id"`
+	ItemSKU         string  `json:"item_sku"`
 	Qty             float64 `json:"qty"`
 	UOM             string  `json:"uom"`
 	BinCode         string  `json:"bin_code"`
@@ -145,10 +156,10 @@ type receiptLineBody struct {
 	UnitCost        float64 `json:"unit_cost"` // purchase cost per unit (from PO/GRN)
 }
 
-func receiptLinesFromBody(lines []receiptLineBody) ([]store.ReceiptLineInput, error) {
+func (a *API) receiptLinesFromBody(ctx context.Context, lines []receiptLineBody) ([]store.ReceiptLineInput, error) {
 	var out []store.ReceiptLineInput
 	for _, l := range lines {
-		itemID, err := uuid.Parse(l.ItemID)
+		itemID, err := a.resolveItemID(ctx, l.ItemID, l.ItemSKU)
 		if err != nil {
 			return nil, err
 		}

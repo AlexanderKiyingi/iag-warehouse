@@ -18,6 +18,7 @@ func (a *API) CreateTransfer(c *gin.Context) {
 		Notes            string `json:"notes"`
 		Lines            []struct {
 			ItemID      string  `json:"item_id"`
+			ItemSKU     string  `json:"item_sku"`
 			Qty         float64 `json:"qty"`
 			FromBinCode string  `json:"from_bin_code"`
 			ToBinCode   string  `json:"to_bin_code"`
@@ -31,13 +32,25 @@ func (a *API) CreateTransfer(c *gin.Context) {
 	}
 	var lines []store.TransferLineInput
 	for _, l := range body.Lines {
-		itemID, err := uuid.Parse(l.ItemID)
+		itemID, err := a.resolveItemID(c.Request.Context(), l.ItemID, l.ItemSKU)
 		if err != nil {
-			badRequest(c, "invalid item_id")
+			badRequest(c, err.Error())
+			return
+		}
+		// A line that names no bin takes the facility default at each end, so a
+		// caller that thinks in sites rather than bins can still move stock.
+		fromBin, err := a.resolveBinCode(c.Request.Context(), l.FromBinCode, body.FromFacilityCode)
+		if err != nil {
+			badRequest(c, "from: "+err.Error())
+			return
+		}
+		toBin, err := a.resolveBinCode(c.Request.Context(), l.ToBinCode, body.ToFacilityCode)
+		if err != nil {
+			badRequest(c, "to: "+err.Error())
 			return
 		}
 		lines = append(lines, store.TransferLineInput{
-			ItemID: itemID, Qty: l.Qty, FromBinCode: l.FromBinCode, ToBinCode: l.ToBinCode,
+			ItemID: itemID, Qty: l.Qty, FromBinCode: fromBin, ToBinCode: toBin,
 			LotKey: l.LotKey, SerialKey: l.SerialKey,
 		})
 	}
@@ -73,15 +86,26 @@ func (a *API) CreateCycleCount(c *gin.Context) {
 
 func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 	var body struct {
-		ItemID    string  `json:"item_id"`
-		BinCode   string  `json:"bin_code"`
-		LotKey    string  `json:"lot_key"`
-		SerialKey string  `json:"serial_key"`
-		QtyAfter  float64 `json:"qty_after"`
-		Reason    string  `json:"reason"`
+		ItemID   string `json:"item_id"`
+		ItemSKU  string `json:"item_sku"`
+		BinCode  string `json:"bin_code"`
+		// FacilityCode stands in for BinCode when the caller knows the site but
+		// not the bin — see resolveBinCode.
+		FacilityCode string   `json:"facility_code"`
+		LotKey       string   `json:"lot_key"`
+		SerialKey    string   `json:"serial_key"`
+		QtyAfter     *float64 `json:"qty_after"`
+		QtyDelta     *float64 `json:"qty_delta"`
+		Reason       string   `json:"reason"`
 	}
-	if err := bindJSONCoerced(c, &body); err != nil || body.ItemID == "" || body.BinCode == "" {
-		badRequest(c, "item_id, bin_code, and qty_after are required")
+	if err := bindJSONCoerced(c, &body); err != nil {
+		badRequest(c, "invalid JSON")
+		return
+	}
+	// Exactly one quantity. Accepting both would leave the caller's intent
+	// ambiguous on the one field that decides what the stock becomes.
+	if (body.QtyAfter == nil) == (body.QtyDelta == nil) {
+		badRequest(c, "send exactly one of qty_after (the counted quantity) or qty_delta (the movement)")
 		return
 	}
 	// A manual adjustment must carry a reason (audit trail for shrinkage/damage/
@@ -90,9 +114,14 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		badRequest(c, "reason is required for a stock adjustment")
 		return
 	}
-	itemID, err := uuid.Parse(body.ItemID)
+	itemID, err := a.resolveItemID(c.Request.Context(), body.ItemID, body.ItemSKU)
 	if err != nil {
-		badRequest(c, "invalid item_id")
+		badRequest(c, err.Error())
+		return
+	}
+	binCode, err := a.resolveBinCode(c.Request.Context(), body.BinCode, body.FacilityCode)
+	if err != nil {
+		badRequest(c, err.Error())
 		return
 	}
 	var actorID *uuid.UUID
@@ -100,8 +129,11 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		actorID = &uid
 	}
 	in := store.AdjustmentInput{
-		ItemID: itemID, BinCode: body.BinCode, LotKey: body.LotKey, SerialKey: body.SerialKey,
-		QtyAfter: body.QtyAfter, Reason: strPtr(body.Reason), ActorID: actorID,
+		ItemID: itemID, BinCode: binCode, LotKey: body.LotKey, SerialKey: body.SerialKey,
+		QtyDelta: body.QtyDelta, Reason: strPtr(body.Reason), ActorID: actorID,
+	}
+	if body.QtyAfter != nil {
+		in.QtyAfter = *body.QtyAfter
 	}
 	a.withIdempotency(c, func() (int, any) {
 		var adj any

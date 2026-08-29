@@ -1,12 +1,10 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
 	"iag-warehouse/backend/internal/middleware"
 	"iag-warehouse/backend/internal/store"
@@ -215,11 +213,6 @@ func (a *API) ResolvePutaway(c *gin.Context) {
 	ok(c, gin.H{"suggestion": sug, "base_qty": conv.BaseQty, "base_uom": conv.BaseUOM})
 }
 
-// resolveItemID accepts either an id or a SKU, since scanners produce SKUs and
-// UIs produce ids and neither should have to translate for the other.
-func (a *API) resolveItemID(ctx context.Context, rawID, sku string) (uuid.UUID, error) {
-	if s := strings.TrimSpace(rawID); s != "" {
-		return uuid.Parse(s)
-	}
-	return a.Store.GetItemIDBySKU(ctx, strings.TrimSpace(sku))
-}
+// resolveItemID moved to business_keys.go, alongside resolveBinCode — it is no
+// longer specific to putaway, and the version there names the offending SKU in
+// its error instead of returning a bare not-found.
