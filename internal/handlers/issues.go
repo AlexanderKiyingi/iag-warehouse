@@ -43,7 +43,7 @@ func hasIssueReference(in store.CreateIssueInput) bool {
 }
 
 func (a *API) CreateIssue(c *gin.Context) {
-	in, createdBy, err := bindIssueInput(c)
+	in, createdBy, err := a.bindIssueInput(c)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -63,7 +63,7 @@ func (a *API) CreateIssue(c *gin.Context) {
 }
 
 func (a *API) IssueForDepartment(c *gin.Context) {
-	in, createdBy, err := bindIssueInput(c)
+	in, createdBy, err := a.bindIssueInput(c)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -116,7 +116,7 @@ func (a *API) PostIssue(c *gin.Context) {
 	})
 }
 
-func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) {
+func (a *API) bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) {
 	var body struct {
 		Department         string `json:"department"`
 		CostCenter         string `json:"cost_center"`
@@ -126,8 +126,12 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 		Priority           string `json:"priority"`
 		BatchBusinessID    string `json:"batch_business_id"`
 		Notes              string `json:"notes"`
-		Lines              []struct {
+		// FacilityCode is the line-level bin fallback, for a caller that knows
+		// the site but not the bin — same as receipts and adjustments.
+		FacilityCode string `json:"facility_code"`
+		Lines        []struct {
 			ItemID    string  `json:"item_id"`
+			ItemSKU   string  `json:"item_sku"`
 			Qty       float64 `json:"qty"`
 			UOM       string  `json:"uom"`
 			BinCode   string  `json:"bin_code"`
@@ -140,7 +144,14 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 	}
 	var lines []store.IssueLineInput
 	for _, l := range body.Lines {
-		itemID, err := uuid.Parse(l.ItemID)
+		// Issuing was the last write path still demanding a UUID, which meant
+		// stock could be received and adjusted from a flat-record client but
+		// never issued — the app had a Stock In and no Stock Out.
+		itemID, err := a.resolveItemID(c.Request.Context(), l.ItemID, l.ItemSKU)
+		if err != nil {
+			return store.CreateIssueInput{}, nil, err
+		}
+		binCode, err := a.resolveBinCode(c.Request.Context(), l.BinCode, body.FacilityCode)
 		if err != nil {
 			return store.CreateIssueInput{}, nil, err
 		}
@@ -149,7 +160,7 @@ func bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID, error) 
 			uom = "ea"
 		}
 		lines = append(lines, store.IssueLineInput{
-			ItemID: itemID, Qty: l.Qty, UOM: uom, BinCode: l.BinCode, LotKey: l.LotKey, SerialKey: l.SerialKey,
+			ItemID: itemID, Qty: l.Qty, UOM: uom, BinCode: binCode, LotKey: l.LotKey, SerialKey: l.SerialKey,
 		})
 	}
 	var createdBy *uuid.UUID
