@@ -30,6 +30,18 @@ type AdjustmentInput struct {
 	Reason   *string
 	AdjType  string
 	ActorID  *uuid.UUID
+
+	// Write-off provenance (migration 034). All optional: an adjustment raised
+	// by a peer service or by count approval knows none of it.
+	ReasonCode     string
+	ExpenseAccount string
+	EvidenceNotes  string
+	// DeclaredUnitCost and DeclaredValue are what the raiser says the movement
+	// was worth. Exactly one is expected from a client; the other is derived
+	// from the quantity actually moved, below, so the two can never disagree.
+	// Neither feeds the GL — that is the costing engine's number.
+	DeclaredUnitCost *float64
+	DeclaredValue    *float64
 }
 
 func (s *Store) CreateAdjustment(ctx context.Context, in AdjustmentInput) (models.Adjustment, error) {
@@ -82,6 +94,60 @@ func resolveQtyAfter(in AdjustmentInput, qtyBefore float64) float64 {
 	return in.QtyAfter
 }
 
+// resolveDeclaredValue completes the raiser's valuation from whichever half of
+// it they sent, against the quantity that actually moved.
+//
+// Same shape as resolveQtyAfter and for the same reason: a screen knows either
+// a unit cost or a total, never reliably both, and storing an unreconciled pair
+// leaves two numbers that can disagree about one movement. Derivation happens
+// against |delta| computed in the transaction, not against a quantity the
+// client sent, so a partially-applied movement values what it actually moved.
+func resolveDeclaredValue(in AdjustmentInput, qtyMoved float64) (unitCost, value *float64) {
+	if in.DeclaredUnitCost == nil && in.DeclaredValue == nil {
+		return nil, nil
+	}
+	if in.DeclaredUnitCost != nil && in.DeclaredValue != nil {
+		// Both given: trust them as sent rather than silently restating one.
+		// The handler refuses this combination, so reaching it means an
+		// internal caller meant it.
+		return in.DeclaredUnitCost, in.DeclaredValue
+	}
+	if in.DeclaredUnitCost != nil {
+		total := *in.DeclaredUnitCost * qtyMoved
+		return in.DeclaredUnitCost, &total
+	}
+	if qtyMoved == 0 {
+		// No quantity moved, so no unit cost is derivable. The declared total
+		// still stands on its own.
+		return nil, in.DeclaredValue
+	}
+	unit := *in.DeclaredValue / qtyMoved
+	return &unit, in.DeclaredValue
+}
+
+// adjustmentEventAttrs is the write-off provenance as the movement event
+// carries it. Nil when there is nothing to say, so an ordinary adjustment's
+// payload is byte-for-byte what it was before.
+func adjustmentEventAttrs(in AdjustmentInput, unitCost, value *float64) map[string]any {
+	attrs := map[string]any{}
+	if in.ReasonCode != "" {
+		attrs["reason_code"] = in.ReasonCode
+	}
+	if in.ExpenseAccount != "" {
+		attrs["expense_account"] = in.ExpenseAccount
+	}
+	if unitCost != nil {
+		attrs["declared_unit_cost"] = *unitCost
+	}
+	if value != nil {
+		attrs["declared_value"] = *value
+	}
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
+}
+
 func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in AdjustmentInput, binID uuid.UUID) (models.Adjustment, error) {
 	lotKey, serialKey := normalizeKeys(in.LotKey, in.SerialKey)
 
@@ -105,13 +171,19 @@ func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in Adjustment
 		}
 	}
 
+	declaredUnitCost, declaredValue := resolveDeclaredValue(in, abs(delta))
+
 	var adj models.Adjustment
 	err = tx.QueryRow(ctx, `
-		INSERT INTO wh_adjustments (adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id, created_at`,
+		INSERT INTO wh_adjustments (adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id,
+			reason_code, expense_account, unit_cost, value, evidence_notes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,''), NULLIF($11,''), $12, $13, NULLIF($14,''))
+		RETURNING id, adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id, created_at,
+			reason_code, expense_account, unit_cost, value, evidence_notes`,
 		in.AdjType, in.ItemID, binID, lotKey, serialKey, qtyBefore, qtyAfter, in.Reason, in.ActorID,
-	).Scan(&adj.ID, &adj.AdjType, &adj.ItemID, &adj.BinID, &adj.LotKey, &adj.SerialKey, &adj.QtyBefore, &adj.QtyAfter, &adj.Reason, &adj.ActorID, &adj.CreatedAt)
+		in.ReasonCode, in.ExpenseAccount, declaredUnitCost, declaredValue, in.EvidenceNotes,
+	).Scan(&adj.ID, &adj.AdjType, &adj.ItemID, &adj.BinID, &adj.LotKey, &adj.SerialKey, &adj.QtyBefore, &adj.QtyAfter, &adj.Reason, &adj.ActorID, &adj.CreatedAt,
+		&adj.ReasonCode, &adj.ExpenseAccount, &adj.UnitCost, &adj.Value, &adj.EvidenceNotes)
 	if err != nil {
 		return adj, err
 	}
@@ -144,7 +216,12 @@ func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in Adjustment
 		if err != nil {
 			return adj, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost, ""); err != nil {
+		// The raiser's account and valuation travel with the movement so
+		// finance can reconcile against them. They are prefixed `declared_`
+		// and left out of the cost fields on purpose: the GL amount is the
+		// costing engine's, and a hand-typed figure quietly taking its place
+		// would be the one change here nobody could see afterwards.
+		if err := s.emitInventoryMovementWithAttrs(ctx, tx, movID, models.MovementAdjustment, in.ItemID, sku, fromBin, toBin, abs(delta), lotKey, serialKey, nil, cost, "", adjustmentEventAttrs(in, declaredUnitCost, declaredValue)); err != nil {
 			return adj, err
 		}
 	}
@@ -159,7 +236,8 @@ func (s *Store) ListAdjustments(ctx context.Context, adjType string, limit int) 
 	}
 	query := `
 		SELECT a.id, a.adj_type, a.item_id, a.bin_id, a.lot_key, a.serial_key, a.qty_before, a.qty_after,
-			a.reason, a.actor_id, a.created_at, i.sku, i.name, b.code
+			a.reason, a.actor_id, a.created_at, i.sku, i.name, b.code,
+			a.reason_code, a.expense_account, a.unit_cost, a.value, a.evidence_notes
 		FROM wh_adjustments a
 		JOIN wh_items i ON i.id = a.item_id
 		JOIN wh_bins b ON b.id = a.bin_id`
@@ -180,7 +258,8 @@ func (s *Store) ListAdjustments(ctx context.Context, adjType string, limit int) 
 	for rows.Next() {
 		var a models.Adjustment
 		if err := rows.Scan(&a.ID, &a.AdjType, &a.ItemID, &a.BinID, &a.LotKey, &a.SerialKey,
-			&a.QtyBefore, &a.QtyAfter, &a.Reason, &a.ActorID, &a.CreatedAt, &a.ItemSKU, &a.ItemName, &a.BinCode); err != nil {
+			&a.QtyBefore, &a.QtyAfter, &a.Reason, &a.ActorID, &a.CreatedAt, &a.ItemSKU, &a.ItemName, &a.BinCode,
+			&a.ReasonCode, &a.ExpenseAccount, &a.UnitCost, &a.Value, &a.EvidenceNotes); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

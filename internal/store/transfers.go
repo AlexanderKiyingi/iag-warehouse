@@ -24,8 +24,12 @@ type CreateTransferInput struct {
 	FromFacilityCode *string
 	ToFacilityCode   *string
 	Notes            *string
-	Lines            []TransferLineInput
-	CreatedBy        *uuid.UUID
+	// ReceivedBy is who took delivery at the destination (migration 035).
+	// Optional: internal transfers raised by replenishment or a handling-unit
+	// move have no receiver to name.
+	ReceivedBy string
+	Lines      []TransferLineInput
+	CreatedBy  *uuid.UUID
 }
 
 func (s *Store) CreateTransfer(ctx context.Context, in CreateTransferInput) (models.Transfer, error) {
@@ -53,11 +57,11 @@ func (s *Store) CreateTransfer(ctx context.Context, in CreateTransferInput) (mod
 
 	var tr models.Transfer
 	err = tx.QueryRow(ctx, `
-		INSERT INTO wh_transfers (from_facility_id, to_facility_id, notes, created_by)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at`,
-		fromFacID, toFacID, in.Notes, in.CreatedBy,
-	).Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt)
+		INSERT INTO wh_transfers (from_facility_id, to_facility_id, notes, created_by, received_by)
+		VALUES ($1, $2, $3, $4, NULLIF($5,''))
+		RETURNING id, status, from_facility_id, to_facility_id, notes, posted_at, received_by, created_by, created_at, updated_at`,
+		fromFacID, toFacID, in.Notes, in.CreatedBy, in.ReceivedBy,
+	).Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt, &tr.ReceivedBy, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt)
 	if err != nil {
 		return tr, err
 	}
@@ -184,9 +188,16 @@ func (s *Store) postTransfer(ctx context.Context, transferID uuid.UUID, actorID 
 func (s *Store) getTransfer(ctx context.Context, id uuid.UUID) (models.Transfer, error) {
 	var tr models.Transfer
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at
-		FROM wh_transfers WHERE id = $1`, id,
-	).Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt)
+		SELECT t.id, t.status, t.from_facility_id, t.to_facility_id, t.notes, t.posted_at,
+		       t.received_by, t.created_by, t.created_at, t.updated_at,
+		       COALESCE(ff.code, ''), COALESCE(tf.code, '')
+		FROM wh_transfers t
+		LEFT JOIN wh_facilities ff ON ff.id = t.from_facility_id
+		LEFT JOIN wh_facilities tf ON tf.id = t.to_facility_id
+		WHERE t.id = $1`, id,
+	).Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt,
+		&tr.ReceivedBy, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt,
+		&tr.FromFacilityCode, &tr.ToFacilityCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tr, ErrNotFound
 	}
@@ -197,16 +208,39 @@ func (s *Store) ListTransfers(ctx context.Context, status string, limit int) ([]
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	// The display joins are the point of this query.
+	//
+	// The list used to select the header alone, so a caller rendering a row got
+	// two facility UUIDs, no item and no quantity — a transfer list that could
+	// not say what had been transferred or where. The lateral picks the first
+	// line and counts the rest; see the note on models.Transfer for why the
+	// quantity is not summed across lines.
+	const listQuery = `
+		SELECT t.id, t.status, t.from_facility_id, t.to_facility_id, t.notes, t.posted_at,
+		       t.received_by, t.created_by, t.created_at, t.updated_at,
+		       COALESCE(ff.code, ''), COALESCE(tf.code, ''),
+		       COALESCE(l.sku, ''), COALESCE(l.name, ''), COALESCE(l.qty, 0), COALESCE(l.line_count, 0)
+		FROM wh_transfers t
+		LEFT JOIN wh_facilities ff ON ff.id = t.from_facility_id
+		LEFT JOIN wh_facilities tf ON tf.id = t.to_facility_id
+		LEFT JOIN LATERAL (
+			SELECT i.sku, i.name, tl.qty,
+			       (SELECT count(*) FROM wh_transfer_lines WHERE transfer_id = t.id) AS line_count
+			FROM wh_transfer_lines tl
+			JOIN wh_items i ON i.id = tl.item_id
+			WHERE tl.transfer_id = t.id
+			ORDER BY tl.id
+			LIMIT 1
+		) l ON TRUE`
+
 	var rows pgx.Rows
 	var err error
 	if status != "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at
-			FROM wh_transfers WHERE status = $1 ORDER BY created_at DESC LIMIT $2`, status, limit)
+		rows, err = s.pool.Query(ctx, listQuery+`
+			WHERE t.status = $1 ORDER BY t.created_at DESC LIMIT $2`, status, limit)
 	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT id, status, from_facility_id, to_facility_id, notes, posted_at, created_by, created_at, updated_at
-			FROM wh_transfers ORDER BY created_at DESC LIMIT $1`, limit)
+		rows, err = s.pool.Query(ctx, listQuery+`
+			ORDER BY t.created_at DESC LIMIT $1`, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -215,7 +249,10 @@ func (s *Store) ListTransfers(ctx context.Context, status string, limit int) ([]
 	out := []models.Transfer{}
 	for rows.Next() {
 		var tr models.Transfer
-		if err := rows.Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt); err != nil {
+		if err := rows.Scan(&tr.ID, &tr.Status, &tr.FromFacilityID, &tr.ToFacilityID, &tr.Notes, &tr.PostedAt,
+			&tr.ReceivedBy, &tr.CreatedBy, &tr.CreatedAt, &tr.UpdatedAt,
+			&tr.FromFacilityCode, &tr.ToFacilityCode,
+			&tr.ItemSKU, &tr.ItemName, &tr.Qty, &tr.LineCount); err != nil {
 			return nil, err
 		}
 		out = append(out, tr)

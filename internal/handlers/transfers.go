@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"iag-warehouse/backend/internal/middleware"
+	"iag-warehouse/backend/internal/models"
 	"iag-warehouse/backend/internal/store"
 )
 
@@ -16,7 +17,9 @@ func (a *API) CreateTransfer(c *gin.Context) {
 		FromFacilityCode string `json:"from_facility_code"`
 		ToFacilityCode   string `json:"to_facility_code"`
 		Notes            string `json:"notes"`
-		Lines            []struct {
+		// ReceivedBy: who signed for it at the far end (migration 035).
+		ReceivedBy string `json:"received_by"`
+		Lines      []struct {
 			ItemID      string  `json:"item_id"`
 			ItemSKU     string  `json:"item_sku"`
 			Qty         float64 `json:"qty"`
@@ -63,6 +66,7 @@ func (a *API) CreateTransfer(c *gin.Context) {
 			FromFacilityCode: strPtr(body.FromFacilityCode),
 			ToFacilityCode:   strPtr(body.ToFacilityCode),
 			Notes:            strPtr(body.Notes),
+			ReceivedBy:       strings.TrimSpace(body.ReceivedBy),
 			Lines:            lines,
 			CreatedBy:        createdBy,
 		})
@@ -97,6 +101,14 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		QtyAfter     *float64 `json:"qty_after"`
 		QtyDelta     *float64 `json:"qty_delta"`
 		Reason       string   `json:"reason"`
+		// Write-off provenance (migration 034). A free-text reason moves the
+		// stock; these are what make the movement reviewable afterwards — what
+		// kind of loss it was, who wears it, and what it was worth.
+		ReasonCode     string   `json:"reason_code"`
+		ExpenseAccount string   `json:"expense_account"`
+		UnitCost       *float64 `json:"unit_cost"`
+		Value          *float64 `json:"value"`
+		EvidenceNotes  string   `json:"evidence_notes"`
 	}
 	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
@@ -112,6 +124,19 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 	// recount). A cycle count is self-justifying — the physical count is the reason.
 	if !cycle && strings.TrimSpace(body.Reason) == "" {
 		badRequest(c, "reason is required for a stock adjustment")
+		return
+	}
+	// Same rule as the quantity pair above, for the same reason: a screen knows
+	// either a unit cost or a total, and storing an unreconciled pair leaves two
+	// numbers that can disagree about one movement. Send one; the other is
+	// derived from the quantity that actually moved.
+	if body.UnitCost != nil && body.Value != nil {
+		badRequest(c, "send at most one of unit_cost or value — the other is derived from the quantity moved")
+		return
+	}
+	body.ReasonCode = strings.ToLower(strings.TrimSpace(body.ReasonCode))
+	if body.ReasonCode != "" && !models.ValidAdjustmentReasonCode(body.ReasonCode) {
+		badRequest(c, "unknown reason_code — expected one of "+strings.Join(models.AdjustmentReasonCodes, ", "))
 		return
 	}
 	itemID, err := a.resolveItemID(c.Request.Context(), body.ItemID, body.ItemSKU)
@@ -131,6 +156,11 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 	in := store.AdjustmentInput{
 		ItemID: itemID, BinCode: binCode, LotKey: body.LotKey, SerialKey: body.SerialKey,
 		QtyDelta: body.QtyDelta, Reason: strPtr(body.Reason), ActorID: actorID,
+		ReasonCode:       body.ReasonCode,
+		ExpenseAccount:   strings.TrimSpace(body.ExpenseAccount),
+		EvidenceNotes:    strings.TrimSpace(body.EvidenceNotes),
+		DeclaredUnitCost: body.UnitCost,
+		DeclaredValue:    body.Value,
 	}
 	if body.QtyAfter != nil {
 		in.QtyAfter = *body.QtyAfter

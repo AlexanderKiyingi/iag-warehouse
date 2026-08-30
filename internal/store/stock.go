@@ -307,10 +307,21 @@ func (s *Store) ListLowStock(ctx context.Context) ([]LowStockItem, error) {
 // Empty for movements this service originates, which is all of them but a
 // receipt raised from a procurement GRN.
 func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost, sourceDocType string) error {
+	return s.emitInventoryMovementWithAttrs(ctx, tx, movementID, movementType, itemID, sku, fromBin, toBin, qty, lotKey, serialKey, batchID, cost, sourceDocType, nil)
+}
+
+// emitInventoryMovementWithAttrs is emitInventoryMovement plus the free-form
+// bag the payload already carries.
+//
+// It exists as its own entry point rather than a fifteenth positional argument
+// on the common path: only the write-off has anything to put in the bag, and
+// every other caller would have gained a `nil` that says nothing.
+func (s *Store) emitInventoryMovementWithAttrs(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost, sourceDocType string, attrs map[string]any) error {
 	if s.invBridge == nil {
 		return nil
 	}
 	payload := inventory.MovementPayload{
+		Attrs: attrs,
 		MovementID:   movementID.String(),
 		MovementType: movementType,
 		ItemID:       itemID.String(),

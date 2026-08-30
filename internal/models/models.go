@@ -269,16 +269,34 @@ type IssueLine struct {
 }
 
 type Transfer struct {
-	ID             uuid.UUID      `json:"id"`
-	Status         string         `json:"status"`
-	FromFacilityID *uuid.UUID     `json:"from_facility_id,omitempty"`
-	ToFacilityID   *uuid.UUID     `json:"to_facility_id,omitempty"`
-	Notes          *string        `json:"notes,omitempty"`
-	PostedAt       *time.Time     `json:"posted_at,omitempty"`
-	CreatedBy      *uuid.UUID     `json:"created_by,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	Lines          []TransferLine `json:"lines,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	Status         string     `json:"status"`
+	FromFacilityID *uuid.UUID `json:"from_facility_id,omitempty"`
+	ToFacilityID   *uuid.UUID `json:"to_facility_id,omitempty"`
+	Notes          *string    `json:"notes,omitempty"`
+	PostedAt       *time.Time `json:"posted_at,omitempty"`
+	// ReceivedBy is who took delivery at the destination (migration 035).
+	ReceivedBy *string        `json:"received_by,omitempty"`
+	CreatedBy  *uuid.UUID     `json:"created_by,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Lines      []TransferLine `json:"lines,omitempty"`
+
+	// Display joins, populated by list reads (not stored on wh_transfers).
+	//
+	// Without these a transfer list renders facility UUIDs and no item at all,
+	// because the lines live on another table and the list never fetched them.
+	// ItemSKU/ItemName/Qty describe the FIRST line; LineCount says how many
+	// there are, so a multi-line transfer reads as what it is rather than
+	// silently showing one line as if it were the whole document. Summing the
+	// quantity across lines was rejected — lines can be in different units and
+	// the total would mean nothing.
+	FromFacilityCode string  `json:"from_facility_code,omitempty"`
+	ToFacilityCode   string  `json:"to_facility_code,omitempty"`
+	ItemSKU          string  `json:"item_sku,omitempty"`
+	ItemName         string  `json:"item_name,omitempty"`
+	Qty              float64 `json:"qty,omitempty"`
+	LineCount        int     `json:"line_count,omitempty"`
 }
 
 type TransferLine struct {
@@ -372,10 +390,36 @@ type Adjustment struct {
 	Reason    *string    `json:"reason,omitempty"`
 	ActorID   *uuid.UUID `json:"actor_id,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
+	// Write-off provenance (migration 034). Nullable throughout: an adjustment
+	// raised by a peer service or by count approval knows none of it.
+	ReasonCode     *string  `json:"reason_code,omitempty"`
+	ExpenseAccount *string  `json:"expense_account,omitempty"`
+	// Declared valuation — what the raiser says the movement was worth. Not the
+	// moving-average cost, which finance books the GL from; see migration 034.
+	UnitCost      *float64 `json:"unit_cost,omitempty"`
+	Value         *float64 `json:"value,omitempty"`
+	EvidenceNotes *string  `json:"evidence_notes,omitempty"`
 	// Display joins, populated by list reads (not stored on wh_adjustments).
 	ItemSKU  string `json:"item_sku,omitempty"`
 	ItemName string `json:"item_name,omitempty"`
 	BinCode  string `json:"bin_code,omitempty"`
+}
+
+// AdjustmentReasonCodes is the closed set migration 034's CHECK allows.
+var AdjustmentReasonCodes = []string{
+	"damage", "loss", "theft", "expiry", "obsolescence", "shrinkage", "other",
+}
+
+// ValidAdjustmentReasonCode reports whether code is one the database will take.
+// Checked in the handler so a bad value is a 400 naming the alternatives rather
+// than a 500 from a constraint violation.
+func ValidAdjustmentReasonCode(code string) bool {
+	for _, c := range AdjustmentReasonCodes {
+		if c == code {
+			return true
+		}
+	}
+	return false
 }
 
 // PackSession is a packing record created from a confirmed pick list.
