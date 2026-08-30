@@ -399,6 +399,10 @@ type Adjustment struct {
 	UnitCost      *float64 `json:"unit_cost,omitempty"`
 	Value         *float64 `json:"value,omitempty"`
 	EvidenceNotes *string  `json:"evidence_notes,omitempty"`
+	// Attachments (migration 036) references files held in iag-dms — never the
+	// bytes. Kept as raw JSON so the service does not take a position on a
+	// shape it neither produces nor reads.
+	Attachments json.RawMessage `json:"attachments,omitempty"`
 	// Display joins, populated by list reads (not stored on wh_adjustments).
 	ItemSKU  string `json:"item_sku,omitempty"`
 	ItemName string `json:"item_name,omitempty"`

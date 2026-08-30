@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -109,6 +110,10 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		UnitCost       *float64 `json:"unit_cost"`
 		Value          *float64 `json:"value"`
 		EvidenceNotes  string   `json:"evidence_notes"`
+		// References to files held in iag-dms (migration 036). Passed through
+		// untouched — this service does not own the shape and should not
+		// pretend to validate it beyond "it is JSON".
+		Attachments json.RawMessage `json:"attachments"`
 	}
 	if err := bindJSONCoerced(c, &body); err != nil {
 		badRequest(c, "invalid JSON")
@@ -161,6 +166,7 @@ func (a *API) adjustmentHandler(c *gin.Context, cycle bool) {
 		EvidenceNotes:    strings.TrimSpace(body.EvidenceNotes),
 		DeclaredUnitCost: body.UnitCost,
 		DeclaredValue:    body.Value,
+		Attachments:      body.Attachments,
 	}
 	if body.QtyAfter != nil {
 		in.QtyAfter = *body.QtyAfter

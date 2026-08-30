@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +69,57 @@ func TestWriteOffProvenanceRoundTrip(t *testing.T) {
 	if !found {
 		t.Fatal("the adjustment is not in the list it was written to")
 	}
+}
+
+// Migration 036: the documents that justify the write-off survive the round
+// trip, and only the references do — the bytes belong in iag-dms.
+func TestWriteOffAttachmentsRoundTrip(t *testing.T) {
+	s, ctx := testPool(t)
+	f := newFixture(t, s, ctx)
+	f.seed(t, s, ctx, f.bulkBin.Code, 60, 2000)
+
+	refs := json.RawMessage(`[{"id":"a1","storageId":"dms-8f2","name":"claim.pdf",` +
+		`"mime":"application/pdf","size":48219,"uploadedAt":"2026-08-31T06:00:00Z"}]`)
+	delta := -4.0
+	reason := "Crushed in transit"
+	adj, err := s.CreateAdjustment(ctx, AdjustmentInput{
+		ItemID:      f.item.ID,
+		BinCode:     f.bulkBin.Code,
+		QtyDelta:    &delta,
+		Reason:      &reason,
+		ReasonCode:  "damage",
+		Attachments: refs,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	list, err := s.ListAdjustments(ctx, "adjustment", 200)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, row := range list {
+		if row.ID != adj.ID {
+			continue
+		}
+		if len(row.Attachments) == 0 {
+			t.Fatal("attachments came back empty — the reference was stored and then not selected")
+		}
+		var parsed []map[string]any
+		if err := json.Unmarshal(row.Attachments, &parsed); err != nil {
+			t.Fatalf("attachments are not valid JSON: %v", err)
+		}
+		if len(parsed) != 1 || parsed[0]["storageId"] != "dms-8f2" {
+			t.Errorf("attachments round-tripped as %s", row.Attachments)
+		}
+		// The whole point of storing references: a row every stock query joins
+		// must not carry file payloads.
+		if strings.Contains(string(row.Attachments), "data:") {
+			t.Error("a data URL reached the database — only references belong here")
+		}
+		return
+	}
+	t.Fatal("the adjustment is not in the list")
 }
 
 // An adjustment raised without any of it — which is every peer service, and

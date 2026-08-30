@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -36,6 +37,9 @@ type AdjustmentInput struct {
 	ReasonCode     string
 	ExpenseAccount string
 	EvidenceNotes  string
+	// Attachments is the caller's reference list, passed through untouched.
+	// Nil means "not sent" and leaves the column alone.
+	Attachments json.RawMessage
 	// DeclaredUnitCost and DeclaredValue are what the raiser says the movement
 	// was worth. Exactly one is expected from a client; the other is derived
 	// from the quantity actually moved, below, so the two can never disagree.
@@ -125,6 +129,18 @@ func resolveDeclaredValue(in AdjustmentInput, qtyMoved float64) (unitCost, value
 	return &unit, in.DeclaredValue
 }
 
+// nullableJSON turns "the caller sent nothing" into a real SQL NULL.
+//
+// An empty json.RawMessage is a zero-length byte slice, and pgx sends that to a
+// jsonb column as an empty string, which is not valid JSON and fails the insert.
+// The distinction matters: nil means "leave it alone", not "store nothing".
+func nullableJSON(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return []byte(raw)
+}
+
 // adjustmentEventAttrs is the write-off provenance as the movement event
 // carries it. Nil when there is nothing to say, so an ordinary adjustment's
 // payload is byte-for-byte what it was before.
@@ -176,14 +192,15 @@ func (s *Store) applyStockChangeTx(ctx context.Context, tx pgx.Tx, in Adjustment
 	var adj models.Adjustment
 	err = tx.QueryRow(ctx, `
 		INSERT INTO wh_adjustments (adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id,
-			reason_code, expense_account, unit_cost, value, evidence_notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,''), NULLIF($11,''), $12, $13, NULLIF($14,''))
+			reason_code, expense_account, unit_cost, value, evidence_notes, attachments)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,''), NULLIF($11,''), $12, $13, NULLIF($14,''), $15::jsonb)
 		RETURNING id, adj_type, item_id, bin_id, lot_key, serial_key, qty_before, qty_after, reason, actor_id, created_at,
-			reason_code, expense_account, unit_cost, value, evidence_notes`,
+			reason_code, expense_account, unit_cost, value, evidence_notes, attachments`,
 		in.AdjType, in.ItemID, binID, lotKey, serialKey, qtyBefore, qtyAfter, in.Reason, in.ActorID,
 		in.ReasonCode, in.ExpenseAccount, declaredUnitCost, declaredValue, in.EvidenceNotes,
+		nullableJSON(in.Attachments),
 	).Scan(&adj.ID, &adj.AdjType, &adj.ItemID, &adj.BinID, &adj.LotKey, &adj.SerialKey, &adj.QtyBefore, &adj.QtyAfter, &adj.Reason, &adj.ActorID, &adj.CreatedAt,
-		&adj.ReasonCode, &adj.ExpenseAccount, &adj.UnitCost, &adj.Value, &adj.EvidenceNotes)
+		&adj.ReasonCode, &adj.ExpenseAccount, &adj.UnitCost, &adj.Value, &adj.EvidenceNotes, &adj.Attachments)
 	if err != nil {
 		return adj, err
 	}
@@ -237,7 +254,7 @@ func (s *Store) ListAdjustments(ctx context.Context, adjType string, limit int) 
 	query := `
 		SELECT a.id, a.adj_type, a.item_id, a.bin_id, a.lot_key, a.serial_key, a.qty_before, a.qty_after,
 			a.reason, a.actor_id, a.created_at, i.sku, i.name, b.code,
-			a.reason_code, a.expense_account, a.unit_cost, a.value, a.evidence_notes
+			a.reason_code, a.expense_account, a.unit_cost, a.value, a.evidence_notes, a.attachments
 		FROM wh_adjustments a
 		JOIN wh_items i ON i.id = a.item_id
 		JOIN wh_bins b ON b.id = a.bin_id`
@@ -259,7 +276,7 @@ func (s *Store) ListAdjustments(ctx context.Context, adjType string, limit int) 
 		var a models.Adjustment
 		if err := rows.Scan(&a.ID, &a.AdjType, &a.ItemID, &a.BinID, &a.LotKey, &a.SerialKey,
 			&a.QtyBefore, &a.QtyAfter, &a.Reason, &a.ActorID, &a.CreatedAt, &a.ItemSKU, &a.ItemName, &a.BinCode,
-			&a.ReasonCode, &a.ExpenseAccount, &a.UnitCost, &a.Value, &a.EvidenceNotes); err != nil {
+			&a.ReasonCode, &a.ExpenseAccount, &a.UnitCost, &a.Value, &a.EvidenceNotes, &a.Attachments); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
