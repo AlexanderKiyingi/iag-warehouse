@@ -84,6 +84,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/receipts/:id/post", appmw.RequirePermission("warehouse.post_receipt"), api.PostReceipt)
 
 		v1.GET("/issues", appmw.RequirePermission("warehouse.view_issue"), api.ListIssues)
+		// What maintenance work orders consumed, with cost (iag-maintenance job costing).
+		v1.GET("/consumption/work-orders", appmw.RequirePermission("warehouse.view_issue"), api.ListWorkOrderConsumption)
 		v1.GET("/issues/:id", appmw.RequirePermission("warehouse.view_issue"), api.GetIssue)
 		v1.POST("/issues", appmw.RequirePermission("warehouse.add_issue"), api.CreateIssue)
 		v1.POST("/issues/:id/post", appmw.RequirePermission("warehouse.post_issue"), api.PostIssue)

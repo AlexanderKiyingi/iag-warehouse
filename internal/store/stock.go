@@ -317,6 +317,18 @@ func (s *Store) emitInventoryMovement(ctx context.Context, tx pgx.Tx, movementID
 // on the common path: only the write-off has anything to put in the bag, and
 // every other caller would have gained a `nil` that says nothing.
 func (s *Store) emitInventoryMovementWithAttrs(ctx context.Context, tx pgx.Tx, movementID uuid.UUID, movementType string, itemID uuid.UUID, sku string, fromBin, toBin *uuid.UUID, qty float64, lotKey, serialKey string, batchID *string, cost movementCost, sourceDocType string, attrs map[string]any) error {
+	// Store the valuation alongside the movement, not only on the event.
+	// Clearing an order's WIP, or costing a maintenance work order, needs to
+	// know what it already consumed, which is a query over past movements —
+	// the event stream is not kept. This ran only when the finance bridge was
+	// configured, so a deployment without one valued nothing it moved.
+	if _, err := tx.Exec(ctx, `
+		UPDATE wh_movements
+		SET unit_cost = $2, total_cost = $3, cost_currency = $4
+		WHERE id = $1`,
+		movementID, cost.UnitCost, cost.TotalCost, cost.Currency); err != nil {
+		return err
+	}
 	if s.invBridge == nil {
 		return nil
 	}
@@ -346,16 +358,6 @@ func (s *Store) emitInventoryMovementWithAttrs(ctx context.Context, tx pgx.Tx, m
 	}
 	if batchID != nil {
 		payload.BatchBusinessID = *batchID
-	}
-	// Store the valuation alongside the movement, not only on the event.
-	// Clearing an order's WIP needs to know what it already consumed, which is
-	// a query over past movements — the event stream is not kept.
-	if _, err := tx.Exec(ctx, `
-		UPDATE wh_movements
-		SET unit_cost = $2, total_cost = $3, cost_currency = $4
-		WHERE id = $1`,
-		movementID, cost.UnitCost, cost.TotalCost, cost.Currency); err != nil {
-		return err
 	}
 	return s.invBridge.EmitMovementPosted(ctx, tx, payload)
 }

@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -182,4 +185,55 @@ func (a *API) bindIssueInput(c *gin.Context) (store.CreateIssueInput, *uuid.UUID
 		// claims to ask.
 		AllowRestrictedItems: callerHolds(c, PermOverrideItemStatus),
 	}, createdBy, nil
+}
+
+// ListWorkOrderConsumption answers "what did these work orders consume, and
+// what did it cost" — the parts half of a maintenance job's cost. Callers pass
+// work_order_ref (repeatable, or comma-separated) and/or since/until (RFC 3339
+// or YYYY-MM-DD) over posted_at.
+func (a *API) ListWorkOrderConsumption(c *gin.Context) {
+	var refs []string
+	for _, raw := range c.QueryArray("work_order_ref") {
+		for _, r := range strings.Split(raw, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				refs = append(refs, r)
+			}
+		}
+	}
+	if len(refs) > 500 {
+		badRequest(c, "at most 500 work_order_ref values per request")
+		return
+	}
+	since, err := parseOptionalTime(c.Query("since"))
+	if err != nil {
+		badRequest(c, "since: "+err.Error())
+		return
+	}
+	until, err := parseOptionalTime(c.Query("until"))
+	if err != nil {
+		badRequest(c, "until: "+err.Error())
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	items, err := a.Store.ListWorkOrderConsumption(c.Request.Context(), store.ConsumptionFilter{
+		WorkOrderRefs: refs, Since: since, Until: until, Limit: limit,
+	})
+	if err != nil {
+		storeErr(c, err)
+		return
+	}
+	ok(c, gin.H{"items": items})
+}
+
+func parseOptionalTime(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, errors.New("use RFC 3339 or YYYY-MM-DD")
 }
