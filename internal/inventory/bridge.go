@@ -36,7 +36,10 @@ type MovementPayload struct {
 	LotKey          string         `json:"lot_key"`
 	SerialKey       string         `json:"serial_key"`
 	BatchBusinessID string         `json:"batch_business_id,omitempty"`
-	Attrs           map[string]any `json:"attrs,omitempty"`
+	// PlantCode is the MES plant (production facility) when the movement came
+	// from a production consume/output. Finance puts it on the journal memo.
+	PlantCode string         `json:"plant_code,omitempty"`
+	Attrs     map[string]any `json:"attrs,omitempty"`
 
 	// Perpetual-inventory valuation (base currency); zero until the WAC engine
 	// computes it for this movement.
@@ -83,6 +86,9 @@ func (b *Bridge) EmitMovementPosted(ctx context.Context, tx pgx.Tx, payload Move
 	}
 	if payload.BatchBusinessID != "" {
 		data["batch_business_id"] = payload.BatchBusinessID
+	}
+	if payload.PlantCode != "" {
+		data["plant_code"] = payload.PlantCode
 	}
 	if payload.Attrs != nil {
 		data["attrs"] = payload.Attrs

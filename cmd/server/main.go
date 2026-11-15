@@ -105,14 +105,15 @@ func main() {
 
 	if len(cfg.KafkaBrokers) > 0 {
 		kc := consumer.New(consumer.Config{
-			Brokers:          cfg.KafkaBrokers,
-			GroupID:          cfg.KafkaConsumerGroup,
-			CommercialTopic:  cfg.KafkaCommercialTopic,
-			ProductionTopic:  cfg.KafkaProductionTopic,
-			QualityTopic:     cfg.KafkaQualityTopic,
-			OperationsTopic:  cfg.KafkaOperationsTopic,
-			SupplyChainTopic: cfg.KafkaSupplyChainTopic,
-			DLQTopic:         cfg.KafkaDLQTopic,
+			Brokers:               cfg.KafkaBrokers,
+			GroupID:               cfg.KafkaConsumerGroup,
+			CommercialTopic:       cfg.KafkaCommercialTopic,
+			ProductionTopic:       cfg.KafkaProductionTopic,
+			QualityTopic:          cfg.KafkaQualityTopic,
+			OperationsTopic:       cfg.KafkaOperationsTopic,
+			SupplyChainTopic:      cfg.KafkaSupplyChainTopic,
+			DLQTopic:              cfg.KafkaDLQTopic,
+			AutoMESProductionPost: cfg.AutoMESProductionPost,
 		}, st)
 		go func() {
 			if err := kc.Run(ctx); err != nil {

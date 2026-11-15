@@ -31,7 +31,7 @@ Compose: `UPSTREAM_WAREHOUSE=http://warehouse:4005` on `api-gateway`.
 | `EVENT_BUS_ENABLED` | `true` + `KAFKA_BROKERS` for outbox → `iag.operations` |
 | `KAFKA_COMMERCIAL_TOPIC` | Consumes `procurement.grn.posted` |
 | `KAFKA_PRODUCTION_TOPIC` | Consumes `mes.*.completed` |
-| `KAFKA_QUALITY_TOPIC` | Consumes `qc.coa.issued` |
+| `KAFKA_QUALITY_TOPIC` | Consumes `qc.coa.issued`, `qc.batch.released`, `qc.batch.held` |
 | `KAFKA_OPERATIONS_TOPIC` | Consumes `dms.dispatch.created` |
 
 ## Kafka — published (`iag.operations`)
@@ -55,7 +55,8 @@ Compose: `UPSTREAM_WAREHOUSE=http://warehouse:4005` on `api-gateway`.
 |-------|------------|--------|
 | `iag.commercial` | `procurement.grn.posted` | Draft warehouse receipt |
 | `iag.production` | `mes.drymill.completed` | Optional FG output |
-| `iag.quality` | `qc.coa.issued` | Release QC hold |
+| `iag.quality` | `qc.coa.issued`, `qc.batch.released` | Release QC hold on lot/batch |
+| `iag.quality` | `qc.batch.held` | Place QC hold on lot/batch |
 | `iag.operations` | `dms.dispatch.created` | Dispatch coordination |
 
 ## Local dev

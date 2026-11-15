@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -194,8 +195,8 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 	defer tx.Rollback(ctx)
 
 	var status string
-	var department *string
-	err = tx.QueryRow(ctx, `SELECT status, department FROM wh_issues WHERE id = $1 FOR UPDATE`, issueID).Scan(&status, &department)
+	var department, costCenter *string
+	err = tx.QueryRow(ctx, `SELECT status, department, cost_center FROM wh_issues WHERE id = $1 FOR UPDATE`, issueID).Scan(&status, &department, &costCenter)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Issue{}, ErrNotFound
 	}
@@ -207,6 +208,17 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 	}
 	if status != models.IssueDraft {
 		return models.Issue{}, ErrConflict
+	}
+
+	issueAttrs := map[string]any{}
+	if department != nil && strings.TrimSpace(*department) != "" {
+		issueAttrs["department"] = strings.TrimSpace(*department)
+	}
+	if costCenter != nil && strings.TrimSpace(*costCenter) != "" {
+		issueAttrs["cost_center"] = strings.TrimSpace(*costCenter)
+	}
+	if len(issueAttrs) == 0 {
+		issueAttrs = nil
 	}
 
 	rows, err := tx.Query(ctx, `
@@ -259,7 +271,7 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 		if err != nil {
 			return models.Issue{}, err
 		}
-		if err := s.emitInventoryMovement(ctx, tx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil, cost, ""); err != nil {
+		if err := s.emitInventoryMovementWithAttrs(ctx, tx, movID, models.MovementIssue, l.itemID, l.sku, &l.binID, nil, l.qty, lotKey, serialKey, nil, cost, "", issueAttrs); err != nil {
 			return models.Issue{}, err
 		}
 		eventLines = append(eventLines, map[string]any{
@@ -279,6 +291,9 @@ func (s *Store) PostIssue(ctx context.Context, issueID uuid.UUID, actorID *uuid.
 			"issue_id":   issueID.String(),
 			"department": department,
 			"lines":      eventLines,
+		}
+		if costCenter != nil {
+			data["cost_center"] = costCenter
 		}
 		if err := s.bus.PublishTx(ctx, tx, events.TypeIssuePosted, data, issueID.String()); err != nil {
 			return models.Issue{}, err

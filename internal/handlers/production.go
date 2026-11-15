@@ -14,6 +14,7 @@ func (a *API) ProductionConsume(c *gin.Context) {
 	var body struct {
 		BatchBusinessID string `json:"batch_business_id"`
 		FacilityCode    string `json:"facility_code"`
+		PlantCode       string `json:"plant_code"`
 		Lines           []struct {
 			ItemID  string  `json:"item_id"`
 			Qty     float64 `json:"qty"`
@@ -44,6 +45,7 @@ func (a *API) ProductionConsume(c *gin.Context) {
 		result, err := a.Store.ProductionConsume(c.Request.Context(), store.ProductionConsumeInput{
 			BatchBusinessID: body.BatchBusinessID,
 			FacilityCode:    body.FacilityCode,
+			PlantCode:       body.PlantCode,
 			Lines:           lines,
 			ActorID:         actorID,
 		})
@@ -66,9 +68,12 @@ func (a *API) ProductionOutput(c *gin.Context) {
 		BinCode         string  `json:"bin_code"`
 		LotKey          string  `json:"lot_key"`
 		QCHold          bool    `json:"qc_hold"`
+		FacilityCode    string  `json:"facility_code"`
+		PlantCode       string  `json:"plant_code"`
 	}
-	if err := bindJSONCoerced(c, &body); err != nil || body.BatchBusinessID == "" || body.BinCode == "" {
-		badRequest(c, "batch_business_id, item_id, qty, and bin_code are required")
+	// bin_code may be omitted: the store picks a facility default (or receiving) bin.
+	if err := bindJSONCoerced(c, &body); err != nil || body.BatchBusinessID == "" || body.ItemID == "" || body.Qty <= 0 {
+		badRequest(c, "batch_business_id, item_id, and qty are required")
 		return
 	}
 	itemID, err := uuid.Parse(body.ItemID)
@@ -92,6 +97,8 @@ func (a *API) ProductionOutput(c *gin.Context) {
 			BinCode:         body.BinCode,
 			LotKey:          body.LotKey,
 			QCHold:          body.QCHold,
+			FacilityCode:    body.FacilityCode,
+			PlantCode:       body.PlantCode,
 			ActorID:         actorID,
 		})
 		if err != nil {
