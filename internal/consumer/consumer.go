@@ -25,6 +25,8 @@ type Config struct {
 	// DLQTopic receives messages the handler cannot process. Empty disables it,
 	// and poison messages are logged and skipped instead.
 	DLQTopic string
+	// AutoMESProductionPost — see config.Config.AutoMESProductionPost.
+	AutoMESProductionPost bool
 }
 
 // An event that cannot be identified or routed is a producer contract problem,
@@ -127,6 +129,9 @@ func (c *Consumer) dispatch(ctx context.Context, eventType string, data map[stri
 	case "procurement.grn.posted":
 		return c.handleGRNPosted(ctx, data)
 	case "mes.wetmill.completed", "mes.drying.completed", "mes.drymill.completed":
+		if !c.cfg.AutoMESProductionPost {
+			return nil
+		}
 		if eventType == "mes.drymill.completed" {
 			return c.handleMESCompleted(ctx, eventType, data)
 		}
@@ -135,6 +140,10 @@ func (c *Consumer) dispatch(ctx context.Context, eventType string, data map[stri
 		return c.handleSCMIntake(ctx, data)
 	case "qc.coa.issued":
 		return c.handleCOAIssued(ctx, data)
+	case "qc.batch.released":
+		return c.handleQCBatchReleased(ctx, data)
+	case "qc.batch.held":
+		return c.handleQCBatchHeld(ctx, data)
 	case "dms.dispatch.created":
 		return c.handleDispatchCreated(ctx, data)
 	default:
@@ -250,16 +259,52 @@ func (c *Consumer) handleMESCompleted(ctx context.Context, eventType string, dat
 }
 
 func (c *Consumer) handleCOAIssued(ctx context.Context, data map[string]any) error {
+	return c.releaseQC(ctx, data)
+}
+
+// handleQCBatchReleased mirrors CoA release for signed QC release decisions
+// (qc.batch.released). Idempotent with qc.coa.issued when both fire.
+func (c *Consumer) handleQCBatchReleased(ctx context.Context, data map[string]any) error {
+	return c.releaseQC(ctx, data)
+}
+
+func (c *Consumer) releaseQC(ctx context.Context, data map[string]any) error {
 	lotKey, ok := strField(data, "lot_business_id")
 	if !ok || lotKey == "" {
 		lotKey, _ = strField(data, "lot_key")
 	}
 	if lotKey != "" {
-		return c.store.ReleaseQCHold(ctx, lotKey)
+		err := c.store.ReleaseQCHold(ctx, lotKey)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
 	}
 	batchID, _ := strField(data, "batch_business_id")
+	if batchID == "" {
+		batchID, _ = strField(data, "batch_ref")
+	}
 	if batchID != "" {
 		return c.store.ReleaseQCHoldByBatch(ctx, batchID)
+	}
+	return nil
+}
+
+// handleQCBatchHeld places warehouse stock on hold from QC quality decisions.
+func (c *Consumer) handleQCBatchHeld(ctx context.Context, data map[string]any) error {
+	lotKey, ok := strField(data, "lot_business_id")
+	if !ok || lotKey == "" {
+		lotKey, _ = strField(data, "lot_key")
+	}
+	if lotKey != "" {
+		return c.store.PlaceQCHold(ctx, lotKey)
+	}
+	batchID, _ := strField(data, "batch_business_id")
+	if batchID == "" {
+		batchID, _ = strField(data, "batch_ref")
+	}
+	if batchID != "" {
+		return c.store.PlaceQCHoldByBatch(ctx, batchID)
 	}
 	return nil
 }
@@ -298,9 +343,11 @@ func (c *Consumer) handleMESBackflush(ctx context.Context, _ string, data map[st
 		return nil
 	}
 	facility, _ := strField(data, "facility_code")
+	plant, _ := strField(data, "plant_code")
 	_, err := c.store.ProductionConsume(ctx, store.ProductionConsumeInput{
 		BatchBusinessID: batchID,
 		FacilityCode:    facility,
+		PlantCode:       plant,
 		Lines:           lines,
 	})
 	return err

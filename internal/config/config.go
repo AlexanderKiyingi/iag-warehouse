@@ -51,6 +51,12 @@ type Config struct {
 	// movements stay cost-less and finance's inventory consumer no-ops. Set via
 	// INVENTORY_COSTING_ENABLED. See docs/PERPETUAL_INVENTORY_EVENTS.md.
 	InventoryCostingEnabled bool
+	// AutoMESProductionPost lets the Kafka consumer create production
+	// consume/output from mes.*.completed payloads (backflush_lines / drymill
+	// sku+bin+qty). Prefer false when iag-production owns stock via HTTP
+	// handoffs — otherwise the same batch can post twice. Default true for
+	// back-compat; set AUTO_MES_PRODUCTION_POST=false. See docs/INVENTORY_CROSS_SERVICE.md.
+	AutoMESProductionPost bool
 	// BaseCurrency stamps the valuation figures on movement events. Default UGX.
 	BaseCurrency string
 
@@ -128,7 +134,9 @@ func Load() (*Config, error) {
 		KafkaDLQTopic:           getenv("KAFKA_DLQ_TOPIC", "iag.warehouse.dlq"),
 		EventBusEnabled:         strings.EqualFold(getenv("EVENT_BUS_ENABLED", "true"), "true"),
 		InventoryCostingEnabled: strings.EqualFold(os.Getenv("INVENTORY_COSTING_ENABLED"), "true"),
-		BaseCurrency:            getenv("BASE_CURRENCY", "UGX"),
+		// Default on: only an explicit "false" disables Kafka auto production posts.
+		AutoMESProductionPost: !strings.EqualFold(os.Getenv("AUTO_MES_PRODUCTION_POST"), "false"),
+		BaseCurrency:          getenv("BASE_CURRENCY", "UGX"),
 		// Both segregation-of-duties gates default ON: they are only disabled by
 		// an explicit "false", never by an unset variable.
 		CountRequireSeparateApprover:  !strings.EqualFold(os.Getenv("WAREHOUSE_COUNT_REQUIRE_SEPARATE_APPROVER"), "false"),

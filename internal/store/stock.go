@@ -333,7 +333,7 @@ func (s *Store) emitInventoryMovementWithAttrs(ctx context.Context, tx pgx.Tx, m
 		return nil
 	}
 	payload := inventory.MovementPayload{
-		Attrs: attrs,
+		Attrs:        attrs,
 		MovementID:   movementID.String(),
 		MovementType: movementType,
 		ItemID:       itemID.String(),
@@ -358,6 +358,11 @@ func (s *Store) emitInventoryMovementWithAttrs(ctx context.Context, tx pgx.Tx, m
 	}
 	if batchID != nil {
 		payload.BatchBusinessID = *batchID
+	}
+	if attrs != nil {
+		if pc, ok := attrs["plant_code"].(string); ok && pc != "" {
+			payload.PlantCode = pc
+		}
 	}
 	return s.invBridge.EmitMovementPosted(ctx, tx, payload)
 }
