@@ -23,19 +23,20 @@ type StockThreshold struct {
 }
 
 type StockReturn struct {
-	ID         uuid.UUID `json:"id"`
-	Item       string    `json:"item"`
-	SKU        string    `json:"sku"`
-	Qty        float64   `json:"qty"`
-	ReturnedBy string    `json:"returned_by"`
-	Condition  string    `json:"condition"`
-	LinkedRef  string    `json:"linked_ref"`
-	Action     string    `json:"action"`
-	Status     string    `json:"status"`
-	Notes      string    `json:"notes"`
-	ReturnDate string    `json:"return_date"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID            uuid.UUID `json:"id"`
+	Item          string    `json:"item"`
+	SKU           string    `json:"sku"`
+	Qty           float64   `json:"qty"`
+	ReturnedBy    string    `json:"returned_by"`
+	Condition     string    `json:"condition"`
+	LinkedRef     string    `json:"linked_ref"`
+	Action        string    `json:"action"`
+	Status        string    `json:"status"`
+	Notes         string    `json:"notes"`
+	ReturnDate    string    `json:"return_date"`
+	FleetClaimRef string    `json:"fleet_claim_ref"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type GatePass struct {
