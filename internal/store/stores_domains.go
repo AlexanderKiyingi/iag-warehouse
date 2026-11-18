@@ -75,11 +75,11 @@ func (s *Store) DeleteThreshold(ctx context.Context, id uuid.UUID) error {
 
 // --- stock returns ----------------------------------------------------------
 
-const returnCols = `id, item, sku, qty, returned_by, condition, linked_ref, action, status, notes, return_date, created_at, updated_at`
+const returnCols = `id, item, sku, qty, returned_by, condition, linked_ref, action, status, notes, return_date, fleet_claim_ref, created_at, updated_at`
 
 func scanReturn(row pgx.Row) (models.StockReturn, error) {
 	var r models.StockReturn
-	err := row.Scan(&r.ID, &r.Item, &r.SKU, &r.Qty, &r.ReturnedBy, &r.Condition, &r.LinkedRef, &r.Action, &r.Status, &r.Notes, &r.ReturnDate, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.Item, &r.SKU, &r.Qty, &r.ReturnedBy, &r.Condition, &r.LinkedRef, &r.Action, &r.Status, &r.Notes, &r.ReturnDate, &r.FleetClaimRef, &r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
 
@@ -102,9 +102,9 @@ func (s *Store) ListReturns(ctx context.Context) ([]models.StockReturn, error) {
 
 func (s *Store) CreateReturn(ctx context.Context, r models.StockReturn) (models.StockReturn, error) {
 	return scanReturn(s.pool.QueryRow(ctx, `
-		INSERT INTO wh_returns (item, sku, qty, returned_by, condition, linked_ref, action, status, notes, return_date)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, ''), 'Pending'), $9, $10)
-		RETURNING `+returnCols, r.Item, r.SKU, r.Qty, r.ReturnedBy, r.Condition, r.LinkedRef, r.Action, r.Status, r.Notes, r.ReturnDate))
+		INSERT INTO wh_returns (item, sku, qty, returned_by, condition, linked_ref, action, status, notes, return_date, fleet_claim_ref)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, ''), 'Pending'), $9, $10, COALESCE($11, ''))
+		RETURNING `+returnCols, r.Item, r.SKU, r.Qty, r.ReturnedBy, r.Condition, r.LinkedRef, r.Action, r.Status, r.Notes, r.ReturnDate, r.FleetClaimRef))
 }
 
 func (s *Store) UpdateReturn(ctx context.Context, id uuid.UUID, r models.StockReturn) (models.StockReturn, error) {
@@ -113,8 +113,9 @@ func (s *Store) UpdateReturn(ctx context.Context, id uuid.UUID, r models.StockRe
 			returned_by=COALESCE(NULLIF($5, ''), returned_by), condition=COALESCE(NULLIF($6, ''), condition),
 			linked_ref=COALESCE(NULLIF($7, ''), linked_ref), action=COALESCE(NULLIF($8, ''), action),
 			status=COALESCE(NULLIF($9, ''), status), notes=COALESCE(NULLIF($10, ''), notes),
-			return_date=COALESCE(NULLIF($11, ''), return_date), updated_at=NOW()
-		WHERE id=$1 RETURNING `+returnCols, id, r.Item, r.SKU, r.Qty, r.ReturnedBy, r.Condition, r.LinkedRef, r.Action, r.Status, r.Notes, r.ReturnDate))
+			return_date=COALESCE(NULLIF($11, ''), return_date),
+			fleet_claim_ref=COALESCE(NULLIF($12, ''), fleet_claim_ref), updated_at=NOW()
+		WHERE id=$1 RETURNING `+returnCols, id, r.Item, r.SKU, r.Qty, r.ReturnedBy, r.Condition, r.LinkedRef, r.Action, r.Status, r.Notes, r.ReturnDate, r.FleetClaimRef))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.StockReturn{}, ErrNotFound
 	}
